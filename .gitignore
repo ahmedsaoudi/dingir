@@ -1,0 +1,81 @@
+# =====================================================================
+# DINGIR FRAMEWORK CONFIGURATION BLACKLIST (.gitignore)
+# =====================================================================
+
+# 1. Python Compilation & Execution Artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# 2. Local Virtual Environments (Standard & UV Ecosystems)
+.venv/
+venv/
+ENV/
+env/
+pyvenv.cfg
+.uv/
+uv.lock
+
+# 3. Heavy Machine Learning & Local Weights Cache
+# Prevents accidentally committing gigabytes of downloaded local model weights
+.cache/
+.huggingface/
+huggingface_hub/
+cache/
+models/
+*.bin
+*.pt
+*.pth
+*.safetensors
+*.gguf
+
+# 4. Embedded Vector Database Runtime Storages
+# Blacklists local temporary ChromaDB or SQLite indexing nodes
+.chroma/
+chroma_data/
+*.db
+*.sqlite
+*.sqlite3
+
+# 5. Testing, Coverage & Distribution Packaging
+.target/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.mo
+*.pot
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 6. IDEs, Operating Systems & Workspace Noise
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
