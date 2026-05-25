@@ -1,5 +1,6 @@
 import json
-from typing import List, Any, Optional, Callable
+import datetime
+from typing import List, Any, Optional, Callable, Dict
 from dingir.chat import Chat
 
 class Agent:
@@ -29,13 +30,39 @@ class Agent:
         except Exception as e:
             return f"EXECUTION FAULT: {str(e)}"
 
+    def _get_serialized_tools(self) -> List[Dict[str, Any]]:
+        """FIX 1: Converts Python callables and sub-agents into clean LLM provider schemas."""
+        serialized = []
+        for t in self.tools:
+            # Check if it's a sub-agent or custom tool with an explicit predefined schema
+            if hasattr(t, "_dingir_schema"):
+                serialized.append(t._dingir_schema)
+            else:
+                # Dynamically construct a valid OpenAI/Anthropic function schema footprint
+                serialized.append({
+                    "type": "function",
+                    "function": {
+                        "name": t.__name__,
+                        "description": t.__doc__ or "No description provided.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {} # For a simple demo, empty parameters object is valid
+                        }
+                    }
+                })
+        return serialized
+
     def respond(self, chat: Chat, message: Optional[str] = None, on_step_callback: Optional[Callable[[Chat], None]] = None):
+        chat.system = chat.system + " " + self.system
         if message:
             chat.add_message(role="user", content=message)
         while True:
             if on_step_callback: on_step_callback(chat)
             serializable_messages = [m.__dict__ for m in chat.messages]
-            result = self.model.request(self.system, serializable_messages, self.tools)
+            
+            # FIX 2: Pass the generated JSON schemas, NOT the raw Python function objects
+            tool_schemas = self._get_serialized_tools()
+            result = self.model.request(self.system, serializable_messages, tool_schemas)
             
             if result.get("tool_calls"):
                 chat.add_message(role="assistant", content=result["content"], tool_calls=result["tool_calls"])
