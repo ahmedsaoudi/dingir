@@ -14,11 +14,27 @@ class Gemini(BaseLLM):
             role = "model" if m["role"] == "assistant" else "user"
             contents.append(types.Content(role=role, parts=[types.Part.from_text(text=m["content"])]))
             
-        gen_config = types.GenerateContentConfig(
-            temperature=self.config.temperature,
-            max_output_tokens=self.config.max_tokens,
-            system_instruction=system
-        )
+        gen_config_kwargs = {
+            "temperature": self.config.temperature,
+            "max_output_tokens": self.config.max_tokens,
+            "system_instruction": system,
+        }
+        if self.config.top_p is not None:
+            gen_config_kwargs["top_p"] = self.config.top_p
+        if self.config.top_k is not None:
+            gen_config_kwargs["top_k"] = self.config.top_k
+        if self.config.stop_sequences:
+            gen_config_kwargs["stop_sequences"] = self.config.stop_sequences
+        if self.config.seed is not None:
+            gen_config_kwargs["seed"] = self.config.seed
+        if self.config.response_format:
+            fmt = self.config.response_format
+            if isinstance(fmt, dict) and fmt.get("type") == "json_object":
+                gen_config_kwargs["response_mime_type"] = "application/json"
+            elif fmt == "json":
+                gen_config_kwargs["response_mime_type"] = "application/json"
+
+        gen_config = types.GenerateContentConfig(**gen_config_kwargs)
         if tools:
             gen_config.tools = [types.Tool(function_declarations=[
                 types.FunctionDeclaration(name=t.__name__, description=t.__doc__ or f"Execute {t.__name__}", parameters=types.Schema(type="OBJECT"))

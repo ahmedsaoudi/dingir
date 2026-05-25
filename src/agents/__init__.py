@@ -1,2 +1,3 @@
 from dingir.agents.core import Agent
-__all__ = ["Agent"]
+from dingir.agents import stdtools
+__all__ = ["Agent", "stdtools"]

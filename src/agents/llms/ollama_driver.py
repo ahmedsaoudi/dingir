@@ -13,7 +13,22 @@ class Ollama(BaseLLM):
         if system: formatted.append({"role": "system", "content": system})
         for m in messages: formatted.append({"role": m["role"], "content": m["content"]})
         
-        options = {"temperature": self.config.temperature, "num_predict": self.config.max_tokens}
+        options = {
+            "temperature": self.config.temperature,
+            "num_predict": self.config.max_tokens,
+        }
+        if self.config.top_p is not None:
+            options["top_p"] = self.config.top_p
+        if self.config.top_k is not None:
+            options["top_k"] = self.config.top_k
+        if self.config.stop_sequences:
+            options["stop"] = self.config.stop_sequences
+        if self.config.seed is not None:
+            options["seed"] = self.config.seed
+        if self.config.presence_penalty != 0.0:
+            options["presence_penalty"] = self.config.presence_penalty
+        if self.config.frequency_penalty != 0.0:
+            options["frequency_penalty"] = self.config.frequency_penalty
         
         # Symmetrically maps formatted functional objects down to Ollama definitions
         ollama_tools = []
@@ -23,7 +38,21 @@ class Ollama(BaseLLM):
                 "function": {"name": t.__name__, "description": t.__doc__ or "", "parameters": {"type": "object", "properties": {}}}
             })
 
-        response = self.client.chat(model=self.id, messages=formatted, options=options, tools=ollama_tools if tools else None)
+        chat_kwargs = {
+            "model": self.id,
+            "messages": formatted,
+            "options": options,
+        }
+        if tools:
+            chat_kwargs["tools"] = ollama_tools
+        if self.config.response_format:
+            fmt = self.config.response_format
+            if isinstance(fmt, dict) and fmt.get("type") == "json_object":
+                chat_kwargs["format"] = "json"
+            elif fmt == "json":
+                chat_kwargs["format"] = "json"
+
+        response = self.client.chat(**chat_kwargs)
         message = response.get("message", {})
         
         tc_out = None

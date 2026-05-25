@@ -34,6 +34,10 @@ class OpenAI(BaseLLM):
         client_kwargs = {}
         if api_key: client_kwargs["api_key"] = api_key
         if base_url: client_kwargs["base_url"] = base_url
+        if self.config.max_retries is not None:
+            client_kwargs["max_retries"] = self.config.max_retries
+        if self.config.timeout is not None:
+            client_kwargs["timeout"] = self.config.timeout
         self.sync_client = OpenAIClient(**client_kwargs)
 
     def request(self, system: Optional[str], messages: List[Dict[str, Any]], tools: List[Any]) -> Dict[str, Any]:
@@ -55,6 +59,23 @@ class OpenAI(BaseLLM):
             "temperature": self.config.temperature,
             "max_tokens": self.config.max_tokens,
         }
+        if self.config.top_p is not None:
+            args["top_p"] = self.config.top_p
+        if self.config.stop_sequences:
+            args["stop"] = self.config.stop_sequences
+        if self.config.presence_penalty != 0.0:
+            args["presence_penalty"] = self.config.presence_penalty
+        if self.config.frequency_penalty != 0.0:
+            args["frequency_penalty"] = self.config.frequency_penalty
+        if self.config.seed is not None:
+            args["seed"] = self.config.seed
+        if self.config.response_format is not None:
+            args["response_format"] = self.config.response_format
+        if self.config.logit_bias is not None:
+            args["logit_bias"] = self.config.logit_bias
+        if self.config.timeout is not None:
+            args["timeout"] = self.config.timeout
+
         if tools:
             args["tools"] = [convert_to_openai_tool(t) for t in tools]
 

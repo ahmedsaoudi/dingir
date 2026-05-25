@@ -1,6 +1,6 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "dingir"
@@ -12,7 +12,8 @@ dependencies = [
     "openai>=1.0.0",
     "google-genai>=0.1.0",
     "ollama>=0.2.0",
-    "huggingface_hub>=0.20.0"
+    "huggingface_hub>=0.20.0",
+    "requests>=2.28.0"
 ]
 
 [project.optional-dependencies]
@@ -27,5 +28,14 @@ local = [
     "transformers>=4.40.0"
 ]
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/dingir"]
+[tool.setuptools]
+package-dir = {"dingir" = "src"}
+packages = [
+    "dingir",
+    "dingir.agents",
+    "dingir.agents.llms",
+    "dingir.agents.stdtools",
+    "dingir.rag",
+    "dingir.rag.stores",
+]
+

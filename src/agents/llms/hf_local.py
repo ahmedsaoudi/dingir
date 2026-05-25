@@ -54,13 +54,25 @@ class HuggingFaceLocal(BaseLLM):
             add_generation_prompt=True
         )
 
-        outputs = self._pipeline(
-            prompt,
-            max_new_tokens=self.config.max_tokens,
-            temperature=self.config.temperature if self.config.temperature > 0 else 0.01,
-            do_sample=self.config.temperature > 0,
-            pad_token_id=self._pipeline.tokenizer.eos_token_id
-        )
+        pipeline_kwargs = {
+            "max_new_tokens": self.config.max_tokens,
+            "temperature": self.config.temperature if self.config.temperature > 0 else 0.01,
+            "do_sample": self.config.temperature > 0,
+            "pad_token_id": self._pipeline.tokenizer.eos_token_id
+        }
+        if self.config.top_p is not None:
+            pipeline_kwargs["top_p"] = self.config.top_p
+        if self.config.top_k is not None:
+            pipeline_kwargs["top_k"] = self.config.top_k
+        if self.config.stop_sequences:
+            pipeline_kwargs["stop_strings"] = self.config.stop_sequences
+            pipeline_kwargs["tokenizer"] = self._pipeline.tokenizer
+
+        if self.config.seed is not None:
+            import torch
+            torch.manual_seed(self.config.seed)
+
+        outputs = self._pipeline(prompt, **pipeline_kwargs)
 
         # Extract only the newly generated token content substring
         generated_text = outputs[0]["generated_text"][len(prompt):]
