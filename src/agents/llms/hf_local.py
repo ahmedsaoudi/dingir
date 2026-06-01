@@ -9,7 +9,9 @@ class HuggingFaceLocal(BaseLLM):
     completely locally on your machine (supports both CPU and CUDA).
     """
 
-    def __init__(self, id: str, config: ModelConfig, task: str = "text-generation"):
+    def __init__(
+        self, id: str, config: ModelConfig, task: str = "text-generation"
+    ):
         super().__init__(id, config)
         self.task = task
         self._pipeline = None
@@ -32,14 +34,19 @@ class HuggingFaceLocal(BaseLLM):
                 "text-generation",
                 model=self.id,
                 device_map="auto" if device == "cuda" else None,
-                torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+                torch_dtype=torch.float16
+                if device == "cuda"
+                else torch.float32,
             )
         elif self.task == "feature-extraction":
             self._tokenizer = AutoTokenizer.from_pretrained(self.id)
             self._model = AutoModel.from_pretrained(self.id).to(device)
 
     def request(
-        self, system: Optional[str], messages: List[Dict[str, Any]], tools: List[Any]
+        self,
+        system: Optional[str],
+        messages: List[Dict[str, Any]],
+        tools: List[Any],
     ) -> Dict[str, Any]:
         self._lazy_load()
 
@@ -48,7 +55,9 @@ class HuggingFaceLocal(BaseLLM):
         if system:
             formatted_messages.append({"role": "system", "content": system})
         for m in messages:
-            formatted_messages.append({"role": m["role"], "content": m["content"]})
+            formatted_messages.append(
+                {"role": m["role"], "content": m["content"]}
+            )
 
         # Apply the model's native chat template
         prompt = self._pipeline.tokenizer.apply_chat_template(
@@ -104,7 +113,9 @@ class HuggingFaceLocal(BaseLLM):
                 .expand(token_embeddings.size())
                 .float()
             )
-            sum_embeddings = torch.sum(token_embeddings * input_mask_expanded, 1)
+            sum_embeddings = torch.sum(
+                token_embeddings * input_mask_expanded, 1
+            )
             sum_mask = torch.clamp(input_mask_expanded.sum(1), min=1e-9)
             embeddings = (sum_embeddings / sum_mask).cpu().numpy().tolist()
 

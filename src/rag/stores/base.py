@@ -19,7 +19,9 @@ class StoreConfig:
 
 
 class BaseStore(ABC):
-    def __init__(self, config: StoreConfig, embedding_model: Optional[Any] = None):
+    def __init__(
+        self, config: StoreConfig, embedding_model: Optional[Any] = None
+    ):
         self.config = config
         self.embedding_model = embedding_model
 
@@ -40,7 +42,9 @@ class BaseStore(ABC):
             f"=== CONTEXT REFERENCE RECORDS ===\n{context}"
         )
         response = llm.request(
-            system=grounding_sys, messages=[{"role": "user", "content": text}], tools=[]
+            system=grounding_sys,
+            messages=[{"role": "user", "content": text}],
+            tools=[],
         )
         return response["content"]
 

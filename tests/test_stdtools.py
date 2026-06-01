@@ -180,7 +180,9 @@ class TestFetchWebpage:
     def test_strips_html_tags(self, mock_get):
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.text = "<html><body><p>Hello <b>world</b></p></body></html>"
+        mock_response.text = (
+            "<html><body><p>Hello <b>world</b></p></body></html>"
+        )
         mock_get.return_value = mock_response
         result = fetch_webpage("http://example.com")
         assert "Hello" in result

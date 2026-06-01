@@ -6,12 +6,17 @@ from dingir.config import ModelConfig
 
 
 class Ollama(BaseLLM):
-    def __init__(self, id: str, config: ModelConfig, base_url: Optional[str] = None):
+    def __init__(
+        self, id: str, config: ModelConfig, base_url: Optional[str] = None
+    ):
         super().__init__(id, config)
         self.client = ollama.Client(host=base_url) if base_url else ollama
 
     def request(
-        self, system: Optional[str], messages: List[Dict[str, Any]], tools: List[Any]
+        self,
+        system: Optional[str],
+        messages: List[Dict[str, Any]],
+        tools: List[Any],
     ) -> Dict[str, Any]:
         formatted = []
         if system:

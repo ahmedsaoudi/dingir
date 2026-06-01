@@ -9,7 +9,9 @@ def track_explicit_args(init_func):
     def wrapper(self, *args, **kwargs):
         sig = inspect.signature(init_func)
         bound = sig.bind(self, *args, **kwargs)
-        self._explicitly_set = {name for name in bound.arguments if name != "self"}
+        self._explicitly_set = {
+            name for name in bound.arguments if name != "self"
+        }
         init_func(self, *args, **kwargs)
 
     return wrapper
@@ -56,7 +58,9 @@ class ModelConfig:
         self.max_tokens = max_tokens
         self.top_p = top_p
         self.top_k = top_k
-        self.stop_sequences = stop_sequences if stop_sequences is not None else []
+        self.stop_sequences = (
+            stop_sequences if stop_sequences is not None else []
+        )
         self.presence_penalty = presence_penalty
         self.frequency_penalty = frequency_penalty
         self.seed = seed

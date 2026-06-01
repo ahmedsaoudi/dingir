@@ -61,7 +61,10 @@ class OpenAI(BaseLLM):
         self.sync_client = OpenAIClient(**client_kwargs)
 
     def request(
-        self, system: Optional[str], messages: List[Dict[str, Any]], tools: List[Any]
+        self,
+        system: Optional[str],
+        messages: List[Dict[str, Any]],
+        tools: List[Any],
     ) -> Dict[str, Any]:
         formatted_messages = []
         if system:
@@ -121,5 +124,7 @@ class OpenAI(BaseLLM):
 
     def embed(self, texts: List[str]) -> List[List[float]]:
         """Integrated symmetrical embedding implementation hook."""
-        response = self.sync_client.embeddings.create(input=texts, model=self.id)
+        response = self.sync_client.embeddings.create(
+            input=texts, model=self.id
+        )
         return [e.embedding for e in response.data]

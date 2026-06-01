@@ -11,21 +11,28 @@ class HuggingFace(BaseLLM):
     If no token is provided, it falls back to the HF_TOKEN environment variable.
     """
 
-    def __init__(self, id: str, config: ModelConfig, token: Optional[str] = None):
+    def __init__(
+        self, id: str, config: ModelConfig, token: Optional[str] = None
+    ):
         super().__init__(id, config)
         self.client = InferenceClient(
             model=id, token=token or os.environ.get("HF_TOKEN")
         )
 
     def request(
-        self, system: Optional[str], messages: List[Dict[str, Any]], tools: List[Any]
+        self,
+        system: Optional[str],
+        messages: List[Dict[str, Any]],
+        tools: List[Any],
     ) -> Dict[str, Any]:
         # Formulate a standard chat conversation sequence payload
         formatted_messages = []
         if system:
             formatted_messages.append({"role": "system", "content": system})
         for m in messages:
-            formatted_messages.append({"role": m["role"], "content": m["content"]})
+            formatted_messages.append(
+                {"role": m["role"], "content": m["content"]}
+            )
 
         # Utilise the unified chat_completion API
         chat_kwargs = {

@@ -36,7 +36,9 @@ def fetch_webpage(url: str) -> str:
         if response.status_code == 200:
             text = response.text
             # Remove scripts and styles
-            text = re.sub(r"<script[^>]*>.*?</script>", "", text, flags=re.DOTALL)
+            text = re.sub(
+                r"<script[^>]*>.*?</script>", "", text, flags=re.DOTALL
+            )
             text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL)
             # Remove all other HTML tags
             clean_text = re.sub(r"<[^>]+>", "", text)

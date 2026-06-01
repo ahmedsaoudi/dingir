@@ -15,7 +15,9 @@ def secure_action(require_approval: bool = True):
             # Unpack JSON arguments strings automatically if pushed from tool executors
             purged_kwargs = {}
             for k, v in kwargs.items():
-                if isinstance(v, str) and (v.startswith("{") or v.startswith("[")):
+                if isinstance(v, str) and (
+                    v.startswith("{") or v.startswith("[")
+                ):
                     try:
                         purged_kwargs[k] = json.loads(v)
                     except:

@@ -7,7 +7,9 @@ from dingir.rag.stores.base import BaseStore, StoreConfig
 class ChromaStore(BaseStore):
     """Self-contained storage client wrapper for ChromaDB execution targets."""
 
-    def __init__(self, config: StoreConfig, embedding_model: Optional[Any] = None):
+    def __init__(
+        self, config: StoreConfig, embedding_model: Optional[Any] = None
+    ):
         super().__init__(config, embedding_model)
         import chromadb
 
@@ -16,10 +18,14 @@ class ChromaStore(BaseStore):
 
         if config.api_key:
             self.client = chromadb.CloudClient(
-                tenant=config.tenant, database=config.database, api_key=config.api_key
+                tenant=config.tenant,
+                database=config.database,
+                api_key=config.api_key,
             )
         elif config.host:
-            self.client = chromadb.HttpClient(host=config.host, port=config.port)
+            self.client = chromadb.HttpClient(
+                host=config.host, port=config.port
+            )
         elif config.path:
             self.client = chromadb.PersistentClient(path=config.path)
         else:
@@ -65,8 +71,14 @@ class ChromaStore(BaseStore):
                 query_embeddings=[query_vector], n_results=top_k
             )
         else:
-            results = self.collection.query(query_texts=[query], n_results=top_k)
+            results = self.collection.query(
+                query_texts=[query], n_results=top_k
+            )
 
-        if not results or not results.get("documents") or not results["documents"][0]:
+        if (
+            not results
+            or not results.get("documents")
+            or not results["documents"][0]
+        ):
             return "No matching structural records found."
         return "\n\n---\n\n".join(results["documents"][0])

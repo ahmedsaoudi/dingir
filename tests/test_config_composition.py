@@ -18,7 +18,11 @@ def test_explicit_args_tracking():
 
     # Multiple fields set
     c2 = ModelConfig(
-        max_tokens=2048, seed=42, stop_sequences=["\n"], min_p=0.05, repeat_penalty=1.1
+        max_tokens=2048,
+        seed=42,
+        stop_sequences=["\n"],
+        min_p=0.05,
+        repeat_penalty=1.1,
     )
     assert c2._explicitly_set == {
         "max_tokens",
@@ -40,7 +44,9 @@ def test_explicit_args_tracking():
 
 
 def test_config_merge_rightmost_precedence():
-    c_common = ModelConfig(max_tokens=2048, temperature=0.2, presence_penalty=0.5)
+    c_common = ModelConfig(
+        max_tokens=2048, temperature=0.2, presence_penalty=0.5
+    )
     c_specific = ModelConfig(
         temperature=0.7, timeout=30.0, min_p=0.1, repeat_penalty=1.2
     )
@@ -69,7 +75,9 @@ def test_config_merge_none_ignored():
 
 def test_invalid_config_type_raises_error():
     # ModelConfig.merge should reject non-ModelConfig types (such as dicts)
-    with pytest.raises(TypeError, match="Expected ModelConfig instance, got dict"):
+    with pytest.raises(
+        TypeError, match="Expected ModelConfig instance, got dict"
+    ):
         ModelConfig.merge([ModelConfig(temperature=0.7), {"temperature": 0.5}])
 
     # BaseLLM should reject dictionary configs
@@ -80,8 +88,12 @@ def test_invalid_config_type_raises_error():
         DummyLLM("dummy-id", {"temperature": 0.5})
 
     # BaseLLM should reject list containing dictionary configs
-    with pytest.raises(TypeError, match="Expected ModelConfig instance, got dict"):
-        DummyLLM("dummy-id", [ModelConfig(temperature=0.7), {"temperature": 0.5}])
+    with pytest.raises(
+        TypeError, match="Expected ModelConfig instance, got dict"
+    ):
+        DummyLLM(
+            "dummy-id", [ModelConfig(temperature=0.7), {"temperature": 0.5}]
+        )
 
 
 def test_driver_composite_config():
@@ -102,7 +114,9 @@ def test_openai_driver_parameter_conversion():
 
     # 1. Test client instantiation with max_retries and timeout
     c = ModelConfig(max_retries=5, timeout=120.0)
-    with patch("dingir.agents.llms.openai_driver.OpenAIClient") as mock_client_cls:
+    with patch(
+        "dingir.agents.llms.openai_driver.OpenAIClient"
+    ) as mock_client_cls:
         model = OpenAI("gpt-4o", config=c, api_key="dummy-key")
         mock_client_cls.assert_called_once_with(
             api_key="dummy-key", max_retries=5, timeout=120.0
@@ -121,7 +135,9 @@ def test_openai_driver_parameter_conversion():
         logit_bias={"50256": -100.0},
         timeout=15.0,
     )
-    with patch("dingir.agents.llms.openai_driver.OpenAIClient") as mock_client_cls:
+    with patch(
+        "dingir.agents.llms.openai_driver.OpenAIClient"
+    ) as mock_client_cls:
         mock_instance = MagicMock()
         mock_client_cls.return_value = mock_instance
         model = OpenAI("gpt-4o", config=c_request, api_key="dummy-key")
@@ -130,7 +146,9 @@ def test_openai_driver_parameter_conversion():
         mock_choice = MagicMock()
         mock_choice.message.content = "hello"
         mock_choice.message.tool_calls = None
-        mock_instance.chat.completions.create.return_value.choices = [mock_choice]
+        mock_instance.chat.completions.create.return_value.choices = [
+            mock_choice
+        ]
 
         res = model.request(
             system="sys", messages=[{"role": "user", "content": "hi"}], tools=[]

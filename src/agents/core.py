@@ -19,7 +19,9 @@ class Agent:
         self.description = description or system[:100]
         self.tools = tools or []
         self.__name__ = (
-            self.__class__.__name__ + "_" + model.id.replace("-", "_").replace(".", "_")
+            self.__class__.__name__
+            + "_"
+            + model.id.replace("-", "_").replace(".", "_")
         )
         self.__doc__ = self.description
 
@@ -27,7 +29,9 @@ class Agent:
         """Executes subagent handoffs cleanly while preserving internal state isolation."""
         scratchpad = Chat(system=self.system)
         self.respond(scratchpad, message=instruction)
-        return scratchpad.last_message.content if scratchpad.last_message else ""
+        return (
+            scratchpad.last_message.content if scratchpad.last_message else ""
+        )
 
     def _execute_tool_sync(self, name: str, args: Any) -> str:
         tool_func = next((t for t in self.tools if t.__name__ == name), None)
@@ -55,7 +59,8 @@ class Agent:
                         "type": "function",
                         "function": {
                             "name": t.__name__,
-                            "description": t.__doc__ or "No description provided.",
+                            "description": t.__doc__
+                            or "No description provided.",
                             "parameters": {
                                 "type": "object",
                                 "properties": {},  # For a simple demo, empty parameters object is valid
@@ -92,7 +97,9 @@ class Agent:
                     tool_calls=result["tool_calls"],
                 )
                 for tc in result["tool_calls"]:
-                    output = self._execute_tool_sync(tc["name"], tc["arguments"])
+                    output = self._execute_tool_sync(
+                        tc["name"], tc["arguments"]
+                    )
                     chat.add_message(
                         role="tool",
                         content=output,

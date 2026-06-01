@@ -28,7 +28,9 @@ class OpenAICompatible(BaseLLM):
             or os.environ.get("OPENAI_COMPATIBLE_API_KEY")
             or os.environ.get("OPENAI_API_KEY")
         )
-        resolved_base_url = base_url or os.environ.get("OPENAI_COMPATIBLE_BASE_URL")
+        resolved_base_url = base_url or os.environ.get(
+            "OPENAI_COMPATIBLE_BASE_URL"
+        )
 
         client_kwargs = {}
         if resolved_api_key:
@@ -43,7 +45,10 @@ class OpenAICompatible(BaseLLM):
         self.sync_client = OpenAIClient(**client_kwargs)
 
     def request(
-        self, system: Optional[str], messages: List[Dict[str, Any]], tools: List[Any]
+        self,
+        system: Optional[str],
+        messages: List[Dict[str, Any]],
+        tools: List[Any],
     ) -> Dict[str, Any]:
         formatted_messages = []
         if system:
@@ -113,5 +118,7 @@ class OpenAICompatible(BaseLLM):
         return {"content": choice.content or "", "tool_calls": tc_out}
 
     def embed(self, texts: List[str]) -> List[List[float]]:
-        response = self.sync_client.embeddings.create(input=texts, model=self.id)
+        response = self.sync_client.embeddings.create(
+            input=texts, model=self.id
+        )
         return [e.embedding for e in response.data]

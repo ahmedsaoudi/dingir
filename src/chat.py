@@ -48,7 +48,10 @@ class Chat:
         return self.messages[-1] if self.messages else None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"system": self.system, "messages": [asdict(m) for m in self.messages]}
+        return {
+            "system": self.system,
+            "messages": [asdict(m) for m in self.messages],
+        }
 
     def __str__(self) -> str:
         """Returns a human-readable transcript of the entire chat history."""

@@ -15,7 +15,9 @@ class RaisesContext:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if exc_type is None:
-            raise AssertionError(f"{self.expected_exception.__name__} not raised")
+            raise AssertionError(
+                f"{self.expected_exception.__name__} not raised"
+            )
         if not issubclass(exc_type, self.expected_exception):
             return False
         if self.match and self.match not in str(exc_val):

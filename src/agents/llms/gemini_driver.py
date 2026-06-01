@@ -6,12 +6,17 @@ from google.genai import Client, types
 
 
 class Gemini(BaseLLM):
-    def __init__(self, id: str, config: ModelConfig, api_key: Optional[str] = None):
+    def __init__(
+        self, id: str, config: ModelConfig, api_key: Optional[str] = None
+    ):
         super().__init__(id, config)
         self.client = Client(api_key=api_key) if api_key else Client()
 
     def request(
-        self, system: Optional[str], messages: List[Dict[str, Any]], tools: List[Any]
+        self,
+        system: Optional[str],
+        messages: List[Dict[str, Any]],
+        tools: List[Any],
     ) -> Dict[str, Any]:
         contents = []
         for m in messages:
@@ -71,7 +76,9 @@ class Gemini(BaseLLM):
         return {"content": response.text or "", "tool_calls": tool_calls}
 
     def embed(self, texts: List[str]) -> List[List[float]]:
-        response = self.client.models.embed_content(model=self.id, contents=texts)
+        response = self.client.models.embed_content(
+            model=self.id, contents=texts
+        )
         if isinstance(response.embeddings, list):
             return [e.values for e in response.embeddings]
         return [response.embeddings.values]
