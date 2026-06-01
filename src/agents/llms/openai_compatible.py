@@ -1,46 +1,19 @@
-import inspect
+import os
 from typing import Any, Dict, List, Optional
 
 from dingir.agents.llms.base import BaseLLM
+from dingir.agents.llms.openai_driver import convert_to_openai_tool
 from dingir.config import ModelConfig
 from openai import OpenAI as OpenAIClient
 
 
-def convert_to_openai_tool(func) -> Dict[str, Any]:
-    if isinstance(func, dict):
-        return func
-    sig = inspect.signature(func)
-    properties = {}
-    required = []
-    for name, param in sig.parameters.items():
-        if name in ["top_k"]:  # Skip standard store macro parameter internals
-            continue
-        p_type = "string"
-        if param.annotation in (int, float):
-            p_type = "number"
-        elif param.annotation == bool:
-            p_type = "boolean"
-        properties[name] = {
-            "type": p_type,
-            "description": f"The argument target value for {name}.",
-        }
-        if param.default == inspect.Parameter.empty:
-            required.append(name)
-    return {
-        "type": "function",
-        "function": {
-            "name": func.__name__,
-            "description": func.__doc__ or f"Execute function {func.__name__}",
-            "parameters": {
-                "type": "object",
-                "properties": properties,
-                "required": required,
-            },
-        },
-    }
+class OpenAICompatible(BaseLLM):
+    """Driver for LLM providers offering an OpenAI-compatible API (e.g. DeepSeek, Anyscale, Together, Groq, local vLLM).
+    If no api_key or base_url are provided, it falls back to environment variables:
+    - OPENAI_COMPATIBLE_API_KEY or OPENAI_API_KEY
+    - OPENAI_COMPATIBLE_BASE_URL
+    """
 
-
-class OpenAI(BaseLLM):
     def __init__(
         self,
         id: str,
@@ -49,15 +22,24 @@ class OpenAI(BaseLLM):
         base_url: Optional[str] = None,
     ):
         super().__init__(id, config)
+
+        resolved_api_key = (
+            api_key
+            or os.environ.get("OPENAI_COMPATIBLE_API_KEY")
+            or os.environ.get("OPENAI_API_KEY")
+        )
+        resolved_base_url = base_url or os.environ.get("OPENAI_COMPATIBLE_BASE_URL")
+
         client_kwargs = {}
-        if api_key:
-            client_kwargs["api_key"] = api_key
-        if base_url:
-            client_kwargs["base_url"] = base_url
+        if resolved_api_key:
+            client_kwargs["api_key"] = resolved_api_key
+        if resolved_base_url:
+            client_kwargs["base_url"] = resolved_base_url
         if self.config.max_retries is not None:
             client_kwargs["max_retries"] = self.config.max_retries
         if self.config.timeout is not None:
             client_kwargs["timeout"] = self.config.timeout
+
         self.sync_client = OpenAIClient(**client_kwargs)
 
     def request(
@@ -99,13 +81,24 @@ class OpenAI(BaseLLM):
         if self.config.timeout is not None:
             args["timeout"] = self.config.timeout
 
+        # Custom compatible parameters routed through extra_body to bypass client-side validation
+        extra_body = {}
+        if self.config.min_p is not None:
+            extra_body["min_p"] = self.config.min_p
+        if self.config.repeat_penalty is not None:
+            extra_body["repetition_penalty"] = self.config.repeat_penalty
+        if self.config.top_k is not None:
+            extra_body["top_k"] = self.config.top_k
+
+        if extra_body:
+            args["extra_body"] = extra_body
+
         if tools:
             args["tools"] = [convert_to_openai_tool(t) for t in tools]
 
         response = self.sync_client.chat.completions.create(**args)
         choice = response.choices[0].message
 
-        # Normalize tool calls structures down to standard primitive dict shapes
         tc_out = None
         if getattr(choice, "tool_calls", None):
             tc_out = [
@@ -120,6 +113,5 @@ class OpenAI(BaseLLM):
         return {"content": choice.content or "", "tool_calls": tc_out}
 
     def embed(self, texts: List[str]) -> List[List[float]]:
-        """Integrated symmetrical embedding implementation hook."""
         response = self.sync_client.embeddings.create(input=texts, model=self.id)
         return [e.embedding for e in response.data]

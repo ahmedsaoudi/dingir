@@ -1,10 +1,12 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, Optional
+
 
 @dataclass
 class StoreConfig:
     """Isolated infrastructure configuration block for vector store adapters."""
+
     collection_name: str = "dingir_default"
     chunk_size: int = 400
     path: Optional[str] = None
@@ -14,6 +16,7 @@ class StoreConfig:
     tenant: str = "default_tenant"
     database: str = "default_database"
     custom_settings: Dict[str, Any] = field(default_factory=dict)
+
 
 class BaseStore(ABC):
     def __init__(self, config: StoreConfig, embedding_model: Optional[Any] = None):
@@ -36,7 +39,9 @@ class BaseStore(ABC):
             "provided context records. If the answer is unavailable, state it explicitly.\n\n"
             f"=== CONTEXT REFERENCE RECORDS ===\n{context}"
         )
-        response = llm.request(system=grounding_sys, messages=[{"role": "user", "content": text}], tools=[])
+        response = llm.request(
+            system=grounding_sys, messages=[{"role": "user", "content": text}], tools=[]
+        )
         return response["content"]
 
     def __call__(self, query: str) -> str:

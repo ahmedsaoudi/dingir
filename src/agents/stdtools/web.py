@@ -1,5 +1,6 @@
 import re
 import urllib.parse
+
 import requests
 
 
@@ -19,7 +20,7 @@ def web_search(query: str) -> str:
                 results = []
                 for i, snip in enumerate(snippets[:5]):
                     clean_snip = re.sub(r"<[^>]+>", "", snip).strip()
-                    results.append(f"{i+1}. {clean_snip}")
+                    results.append(f"{i + 1}. {clean_snip}")
                 return "\n\n".join(results)
             return "No results found."
         return f"Search failed with status code {response.status_code}."

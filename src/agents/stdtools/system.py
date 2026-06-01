@@ -1,6 +1,6 @@
 import ast
-import operator
 import datetime
+import operator
 
 
 def calculator(expression: str) -> str:

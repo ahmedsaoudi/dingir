@@ -1,5 +1,6 @@
-from dataclasses import dataclass, field, asdict
-from typing import List, Dict, Any, Optional
+from dataclasses import asdict, dataclass
+from typing import Any, Dict, List, Optional
+
 
 @dataclass
 class Message:
@@ -14,19 +15,25 @@ class Message:
         header = f"{self.role.upper()}"
         if self.name:
             header += f" ({self.name})"
-        
+
         lines = [f"{header}: {self.content or ''}"]
-        
+
         if self.tool_calls:
             lines.append(f"  Tool Calls: {self.tool_calls}")
         if self.tool_call_id:
             lines.append(f"  Tool Call ID: {self.tool_call_id}")
-            
+
         return "\n".join(lines)
+
 
 class Chat:
     """An explicit, mutable timeline wrapper over serializable standard Python primitives."""
-    def __init__(self, system: Optional[str] = None, messages: Optional[List[Dict[str, Any]]] = None):
+
+    def __init__(
+        self,
+        system: Optional[str] = None,
+        messages: Optional[List[Dict[str, Any]]] = None,
+    ):
         self.system: Optional[str] = system
         self.messages: List[Message] = []
         if messages:
@@ -41,26 +48,23 @@ class Chat:
         return self.messages[-1] if self.messages else None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
-            "system": self.system,
-            "messages": [asdict(m) for m in self.messages]
-        }
+        return {"system": self.system, "messages": [asdict(m) for m in self.messages]}
 
     def __str__(self) -> str:
         """Returns a human-readable transcript of the entire chat history."""
         elements = []
-        
+
         # 1. Include the system prompt if it exists
         if self.system:
             elements.append(f"SYSTEM PROMPT:\n{self.system}")
             elements.append("-" * 40)
-        
+
         # 2. Append all messages using the Message.__str__ formatting
         if self.messages:
             elements.append("\n".join(str(m) for m in self.messages))
         else:
             elements.append("[Empty Chat Session]")
-            
+
         return "\n".join(elements)
 
     def __iter__(self):
@@ -74,4 +78,3 @@ class Chat:
     def __getitem__(self, index) -> Message:
         """Allows indexing: chat[0] or slicing: chat[-1]"""
         return self.messages[index]
-
