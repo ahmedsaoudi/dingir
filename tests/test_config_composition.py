@@ -15,11 +15,13 @@ def test_explicit_args_tracking():
     assert c1.max_tokens == 1024  # default value
 
     # Multiple fields set
-    c2 = ModelConfig(max_tokens=2048, seed=42, stop_sequences=["\n"])
-    assert c2._explicitly_set == {"max_tokens", "seed", "stop_sequences"}
+    c2 = ModelConfig(max_tokens=2048, seed=42, stop_sequences=["\n"], min_p=0.05, repeat_penalty=1.1)
+    assert c2._explicitly_set == {"max_tokens", "seed", "stop_sequences", "min_p", "repeat_penalty"}
     assert c2.max_tokens == 2048
     assert c2.seed == 42
     assert c2.stop_sequences == ["\n"]
+    assert c2.min_p == 0.05
+    assert c2.repeat_penalty == 1.1
     assert c2.temperature == 0.0  # default value
 
     # No fields explicitly set (rely on defaults)
@@ -28,11 +30,11 @@ def test_explicit_args_tracking():
 
 def test_config_merge_rightmost_precedence():
     c_common = ModelConfig(max_tokens=2048, temperature=0.2, presence_penalty=0.5)
-    c_specific = ModelConfig(temperature=0.7, timeout=30.0)
+    c_specific = ModelConfig(temperature=0.7, timeout=30.0, min_p=0.1, repeat_penalty=1.2)
 
     # Merge [c_common, c_specific]
     # Rightmost (c_specific) should override temperature (0.2 -> 0.7)
-    # Non-overlapping fields (max_tokens=2048, presence_penalty=0.5 from c_common; timeout=30.0 from c_specific) should combine
+    # Non-overlapping fields (max_tokens=2048, presence_penalty=0.5 from c_common; timeout=30.0, min_p=0.1, repeat_penalty=1.2 from c_specific) should combine
     # All other fields should be their default values
     merged = ModelConfig.merge([c_common, c_specific])
 
@@ -40,6 +42,8 @@ def test_config_merge_rightmost_precedence():
     assert merged.max_tokens == 2048
     assert merged.presence_penalty == 0.5
     assert merged.timeout == 30.0
+    assert merged.min_p == 0.1
+    assert merged.repeat_penalty == 1.2
     assert merged.top_p is None  # default
     assert merged.stop_sequences == []  # default
 
@@ -127,3 +131,59 @@ def test_openai_driver_parameter_conversion():
             logit_bias={"50256": -100.0},
             timeout=15.0
         )
+
+def test_openai_compatible_driver():
+    from unittest.mock import MagicMock, patch
+    from dingir.agents.llms.openai_compatible import OpenAICompatible
+    import os
+
+    # 1. Test parameter passing and env var fallbacks
+    c = ModelConfig(max_retries=3, timeout=60.0)
+
+    # Fallback to OPENAI_COMPATIBLE_API_KEY and OPENAI_COMPATIBLE_BASE_URL
+    with patch.dict(os.environ, {
+        "OPENAI_COMPATIBLE_API_KEY": "compat-key",
+        "OPENAI_COMPATIBLE_BASE_URL": "https://api.compat.com/v1"
+    }):
+        with patch("dingir.agents.llms.openai_compatible.OpenAIClient") as mock_client_cls:
+            model = OpenAICompatible("deepseek-chat", config=c)
+            mock_client_cls.assert_called_once_with(
+                api_key="compat-key",
+                base_url="https://api.compat.com/v1",
+                max_retries=3,
+                timeout=60.0
+            )
+
+    # Fallback to OPENAI_API_KEY if compat key is not present
+    with patch.dict(os.environ, {
+        "OPENAI_API_KEY": "openai-key",
+        "OPENAI_COMPATIBLE_BASE_URL": "https://api.compat.com/v1"
+    }, clear=True):
+        with patch("dingir.agents.llms.openai_compatible.OpenAIClient") as mock_client_cls:
+            model = OpenAICompatible("deepseek-chat", config=c)
+            mock_client_cls.assert_called_once_with(
+                api_key="openai-key",
+                base_url="https://api.compat.com/v1",
+                max_retries=3,
+                timeout=60.0
+            )
+
+    # Direct constructor arguments override env variables
+    with patch.dict(os.environ, {
+        "OPENAI_COMPATIBLE_API_KEY": "compat-key",
+        "OPENAI_COMPATIBLE_BASE_URL": "https://api.compat.com/v1"
+    }):
+        with patch("dingir.agents.llms.openai_compatible.OpenAIClient") as mock_client_cls:
+            model = OpenAICompatible(
+                "deepseek-chat",
+                config=c,
+                api_key="override-key",
+                base_url="https://override.com/v1"
+            )
+            mock_client_cls.assert_called_once_with(
+                api_key="override-key",
+                base_url="https://override.com/v1",
+                max_retries=3,
+                timeout=60.0
+            )
+
