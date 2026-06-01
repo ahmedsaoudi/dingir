@@ -10,6 +10,7 @@ from dingir.agents.stdtools.web import web_search, fetch_webpage
 
 # --- Calculator tests ---
 
+
 class TestCalculator:
     def test_basic_arithmetic(self):
         assert calculator("2+3") == "5"
@@ -54,6 +55,7 @@ class TestCalculator:
 
 # --- current_datetime tests ---
 
+
 class TestCurrentDatetime:
     def test_returns_string(self):
         result = current_datetime()
@@ -69,6 +71,7 @@ class TestCurrentDatetime:
 
 
 # --- File system tests ---
+
 
 class TestFileSystem:
     def test_read_file(self, tmp_path, monkeypatch):
@@ -133,15 +136,16 @@ class TestFileSystem:
 
 # --- Web tools tests (mocked) ---
 
+
 class TestWebSearch:
     @patch("dingir.agents.stdtools.web.requests.get")
     def test_returns_parsed_snippets(self, mock_get):
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.text = '''
+        mock_response.text = """
         <a class="result__snippet" href="#">First result snippet</a>
         <a class="result__snippet" href="#">Second result snippet</a>
-        '''
+        """
         mock_get.return_value = mock_response
         result = web_search("test query")
         assert "1." in result
