@@ -15,9 +15,77 @@ class Agent:
         tools: Optional[List[Any]] = None,
     ):
         self.model = model
-        self.system = system
         self.description = description or system[:100]
         self.tools = tools or []
+        
+        # Build tool description list to append to system prompt
+        if self.tools:
+            tool_descriptions = []
+            for t in self.tools:
+                # Extract schema information
+                if hasattr(t, "_dingir_schema"):
+                    func = t._dingir_schema.get("function", {})
+                    name = func.get("name", getattr(t, "__name__", "unknown"))
+                    desc = func.get("description", getattr(t, "__doc__", "No description provided."))
+                    properties = func.get("parameters", {}).get("properties", {})
+                    required = func.get("parameters", {}).get("required", [])
+                else:
+                    name = getattr(t, "__name__", "unknown")
+                    desc = getattr(t, "__doc__", "No description provided.")
+                    properties = {}
+                    required = []
+                    try:
+                        import inspect
+                        sig = inspect.signature(t)
+                        for param_name, param in sig.parameters.items():
+                            if param_name in ["top_k"]:
+                                continue
+                            p_type = "string"
+                            if param.annotation in (int, float):
+                                p_type = "number"
+                            elif param.annotation == bool:
+                                p_type = "boolean"
+                            properties[param_name] = {
+                                "type": p_type,
+                                "description": f"The target value for {param_name}."
+                            }
+                            if param.default == inspect.Parameter.empty:
+                                required.append(param_name)
+                    except Exception:
+                        pass
+                
+                clean_desc = desc.strip() if desc else "No description provided."
+                
+                # Format parameters for this tool
+                param_lines = []
+                for p_name, p_info in properties.items():
+                    p_type = p_info.get("type", "any")
+                    p_desc = p_info.get("description", "").strip()
+                    p_req = "required" if p_name in required else "optional"
+                    p_desc_suffix = f": {p_desc}" if p_desc else ""
+                    param_lines.append(f"    * {p_name} ({p_type}, {p_req}){p_desc_suffix}")
+                
+                param_str = "\n" + "\n".join(param_lines) if param_lines else " (No parameters)"
+                tool_descriptions.append(f"- **{name}**: {clean_desc}\n  Parameters:{param_str}")
+            
+            tool_descriptions_str = "\n\n".join(tool_descriptions)
+            
+            # Enrich system prompt with a comprehensive instruction framework
+            tools_instruction_block = (
+                "\n\n"
+                "### TOOL INTEGRATION PROTOCOLS\n"
+                "You have access to the following toolset to assist in resolving the user instruction:\n\n"
+                f"{tool_descriptions_str}\n\n"
+                "### TOOL EXECUTION GUIDELINES\n"
+                "1. **Selection & Relevance**: Analyze the user query and select the most appropriate tool from the toolset above. If no tool is needed or suitable, respond directly using your general knowledge.\n"
+                "2. **Arguments & Type Constraints**: When executing a tool call, ensure you strictly adhere to the types, descriptions, and required constraints defined in the parameter schema.\n"
+                "3. **JSON Structure**: All arguments must be passed as a valid JSON object matching the defined parameter structure.\n"
+                "4. **Execution Flow**: Always execute the tool through the provider's native tool-calling interface. Do not simulate or mock tool responses in your text content."
+            )
+            self.system = f"{system}{tools_instruction_block}"
+        else:
+            self.system = system
+
         self.__name__ = (
             self.__class__.__name__
             + "_"
@@ -45,15 +113,41 @@ class Agent:
         except Exception as e:
             return f"EXECUTION FAULT: {str(e)}"
 
-    def _get_serialized_tools(self) -> List[Dict[str, Any]]:
-        """FIX 1: Converts Python callables and sub-agents into clean LLM provider schemas."""
+    def _get_serialized_tools(self, chat: Optional[Chat] = None) -> List[Dict[str, Any]]:
+        """FIX 1 & 2: Converts Python callables and sub-agents into clean LLM provider schemas, with parameter serialization and hallucination schema recovery."""
         serialized = []
+        existing_names = set()
         for t in self.tools:
             # Check if it's a sub-agent or custom tool with an explicit predefined schema
             if hasattr(t, "_dingir_schema"):
-                serialized.append(t._dingir_schema)
+                schema = t._dingir_schema
+                existing_names.add(schema.get("function", {}).get("name", ""))
+                serialized.append(schema)
             else:
                 # Dynamically construct a valid OpenAI/Anthropic function schema footprint
+                import inspect
+                properties = {}
+                required = []
+                try:
+                    sig = inspect.signature(t)
+                    for param_name, param in sig.parameters.items():
+                        if param_name in ["top_k"]:
+                            continue
+                        p_type = "string"
+                        if param.annotation in (int, float):
+                            p_type = "number"
+                        elif param.annotation == bool:
+                            p_type = "boolean"
+                        properties[param_name] = {
+                            "type": p_type,
+                            "description": f"The target value for {param_name}.",
+                        }
+                        if param.default == inspect.Parameter.empty:
+                            required.append(param_name)
+                except Exception:
+                    pass
+
+                existing_names.add(t.__name__)
                 serialized.append(
                     {
                         "type": "function",
@@ -63,11 +157,34 @@ class Agent:
                             or "No description provided.",
                             "parameters": {
                                 "type": "object",
-                                "properties": {},  # For a simple demo, empty parameters object is valid
+                                "properties": properties,
+                                "required": required,
                             },
                         },
                     }
                 )
+
+        # Inject dummy definitions for hallucinated/missing tools to prevent API gateway validation errors
+        if chat:
+            for m in chat.messages:
+                if m.tool_calls:
+                    for tc in m.tool_calls:
+                        name = tc.get("name")
+                        if name and name not in existing_names:
+                            existing_names.add(name)
+                            serialized.append(
+                                {
+                                    "type": "function",
+                                    "function": {
+                                        "name": name,
+                                        "description": "Hallucinated or unavailable tool helper.",
+                                        "parameters": {
+                                            "type": "object",
+                                            "properties": {},
+                                        },
+                                    },
+                                }
+                            )
         return serialized
 
     def respond(
@@ -76,7 +193,10 @@ class Agent:
         message: Optional[str] = None,
         on_step_callback: Optional[Callable[[Chat], None]] = None,
     ):
-        chat.system = chat.system + " " + self.system
+        if not chat.system:
+            chat.system = self.system
+        elif self.system not in chat.system:
+            chat.system = f"{chat.system} {self.system}"
         if message:
             chat.add_message(role="user", content=message)
         while True:
@@ -85,7 +205,7 @@ class Agent:
             serializable_messages = [m.__dict__ for m in chat.messages]
 
             # FIX 2: Pass the generated JSON schemas, NOT the raw Python function objects
-            tool_schemas = self._get_serialized_tools()
+            tool_schemas = self._get_serialized_tools(chat)
             result = self.model.request(
                 self.system, serializable_messages, tool_schemas
             )

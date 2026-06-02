@@ -72,7 +72,17 @@ class OpenAI(BaseLLM):
         for m in messages:
             msg = {"role": m["role"], "content": m["content"]}
             if m.get("tool_calls"):
-                msg["tool_calls"] = m["tool_calls"]
+                msg["tool_calls"] = [
+                    {
+                        "id": tc.get("id"),
+                        "type": "function",
+                        "function": {
+                            "name": tc.get("name"),
+                            "arguments": tc.get("arguments"),
+                        }
+                    }
+                    for tc in m["tool_calls"]
+                ]
             if m.get("tool_call_id"):
                 msg["tool_call_id"] = m["tool_call_id"]
                 msg["role"] = "tool"

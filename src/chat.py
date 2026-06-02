@@ -71,8 +71,10 @@ class Chat:
         return "\n".join(elements)
 
     def __iter__(self):
-        """Allows direct iteration over the chat's messages."""
-        return iter(self.messages)
+        """Allows direct iteration over the chat's messages, yielding system message first if present."""
+        if self.system:
+            yield Message(role="system", content=self.system)
+        yield from self.messages
 
     def __len__(self) -> int:
         """Returns the number of messages in the chat: len(chat)"""
