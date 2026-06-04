@@ -18,20 +18,26 @@ def calculator(expression: str) -> str:
     }
 
     def _eval_node(node):
-        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+        if isinstance(node, ast.Constant) and isinstance(
+            node.value, (int, float)
+        ):
             return node.value
         elif isinstance(node, ast.BinOp):
             op = type(node.op)
             if op not in allowed_operators:
                 raise TypeError(f"Unsupported operator: {op.__name__}")
-            return allowed_operators[op](_eval_node(node.left), _eval_node(node.right))
+            return allowed_operators[op](
+                _eval_node(node.left), _eval_node(node.right)
+            )
         elif isinstance(node, ast.UnaryOp):
             op = type(node.op)
             if op not in allowed_operators:
                 raise TypeError(f"Unsupported unary operator: {op.__name__}")
             return allowed_operators[op](_eval_node(node.operand))
         else:
-            raise TypeError(f"Unsupported expression element: {type(node).__name__}")
+            raise TypeError(
+                f"Unsupported expression element: {type(node).__name__}"
+            )
 
     try:
         tree = ast.parse(expression, mode="eval")

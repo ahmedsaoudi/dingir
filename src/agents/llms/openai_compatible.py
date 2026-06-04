@@ -63,7 +63,7 @@ class OpenAICompatible(BaseLLM):
                         "function": {
                             "name": tc.get("name"),
                             "arguments": tc.get("arguments"),
-                        }
+                        },
                     }
                     for tc in m["tool_calls"]
                 ]

@@ -44,14 +44,18 @@ def web_search(query: str) -> str:
     url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
     try:
         response = requests.get(url, headers=headers, timeout=10)
-        
+
         # If rate limited (202) or fails, fallback to Lite version via POST
         if response.status_code == 202 or response.status_code != 200:
             lite_url = "https://lite.duckduckgo.com/lite/"
             data = {"q": query}
-            headers["User-Agent"] = random.choice([ua for ua in user_agents if ua != headers["User-Agent"]])
+            headers["User-Agent"] = random.choice(
+                [ua for ua in user_agents if ua != headers["User-Agent"]]
+            )
             headers["Referer"] = "https://lite.duckduckgo.com/"
-            response = requests.post(lite_url, headers=headers, data=data, timeout=10)
+            response = requests.post(
+                lite_url, headers=headers, data=data, timeout=10
+            )
 
         if response.status_code == 200:
             snippets = parse_html_snippets(response.text)
@@ -59,7 +63,11 @@ def web_search(query: str) -> str:
                 results = []
                 for i, snip in enumerate(snippets[:5]):
                     clean_snip = re.sub(r"<[^>]+>", "", snip).strip()
-                    clean_snip = clean_snip.replace("&amp;", "&").replace("&quot;", '"').replace("&#x27;", "'")
+                    clean_snip = (
+                        clean_snip.replace("&amp;", "&")
+                        .replace("&quot;", '"')
+                        .replace("&#x27;", "'")
+                    )
                     results.append(f"{i + 1}. {clean_snip}")
                 return "\n\n".join(results)
             return "No results found."
@@ -76,7 +84,9 @@ def fetch_webpage(url: str) -> str:
         if response.status_code == 200:
             text = response.text
             # Remove scripts and styles
-            text = re.sub(r"<script[^>]*>.*?</script>", "", text, flags=re.DOTALL)
+            text = re.sub(
+                r"<script[^>]*>.*?</script>", "", text, flags=re.DOTALL
+            )
             text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL)
             # Remove all other HTML tags
             clean_text = re.sub(r"<[^>]+>", "", text)

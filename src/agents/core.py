@@ -17,7 +17,7 @@ class Agent:
         self.model = model
         self.description = description or system[:100]
         self.tools = tools or []
-        
+
         # Build tool description list to append to system prompt
         if self.tools:
             tool_descriptions = []
@@ -26,8 +26,13 @@ class Agent:
                 if hasattr(t, "_dingir_schema"):
                     func = t._dingir_schema.get("function", {})
                     name = func.get("name", getattr(t, "__name__", "unknown"))
-                    desc = func.get("description", getattr(t, "__doc__", "No description provided."))
-                    properties = func.get("parameters", {}).get("properties", {})
+                    desc = func.get(
+                        "description",
+                        getattr(t, "__doc__", "No description provided."),
+                    )
+                    properties = func.get("parameters", {}).get(
+                        "properties", {}
+                    )
                     required = func.get("parameters", {}).get("required", [])
                 else:
                     name = getattr(t, "__name__", "unknown")
@@ -36,6 +41,7 @@ class Agent:
                     required = []
                     try:
                         import inspect
+
                         sig = inspect.signature(t)
                         for param_name, param in sig.parameters.items():
                             if param_name in ["top_k"]:
@@ -47,15 +53,17 @@ class Agent:
                                 p_type = "boolean"
                             properties[param_name] = {
                                 "type": p_type,
-                                "description": f"The target value for {param_name}."
+                                "description": f"The target value for {param_name}.",
                             }
                             if param.default == inspect.Parameter.empty:
                                 required.append(param_name)
                     except Exception:
                         pass
-                
-                clean_desc = desc.strip() if desc else "No description provided."
-                
+
+                clean_desc = (
+                    desc.strip() if desc else "No description provided."
+                )
+
                 # Format parameters for this tool
                 param_lines = []
                 for p_name, p_info in properties.items():
@@ -63,13 +71,21 @@ class Agent:
                     p_desc = p_info.get("description", "").strip()
                     p_req = "required" if p_name in required else "optional"
                     p_desc_suffix = f": {p_desc}" if p_desc else ""
-                    param_lines.append(f"    * {p_name} ({p_type}, {p_req}){p_desc_suffix}")
-                
-                param_str = "\n" + "\n".join(param_lines) if param_lines else " (No parameters)"
-                tool_descriptions.append(f"- **{name}**: {clean_desc}\n  Parameters:{param_str}")
-            
+                    param_lines.append(
+                        f"    * {p_name} ({p_type}, {p_req}){p_desc_suffix}"
+                    )
+
+                param_str = (
+                    "\n" + "\n".join(param_lines)
+                    if param_lines
+                    else " (No parameters)"
+                )
+                tool_descriptions.append(
+                    f"- **{name}**: {clean_desc}\n  Parameters:{param_str}"
+                )
+
             tool_descriptions_str = "\n\n".join(tool_descriptions)
-            
+
             # Enrich system prompt with a comprehensive instruction framework
             tools_instruction_block = (
                 "\n\n"
@@ -113,7 +129,9 @@ class Agent:
         except Exception as e:
             return f"EXECUTION FAULT: {str(e)}"
 
-    def _get_serialized_tools(self, chat: Optional[Chat] = None) -> List[Dict[str, Any]]:
+    def _get_serialized_tools(
+        self, chat: Optional[Chat] = None
+    ) -> List[Dict[str, Any]]:
         """FIX 1 & 2: Converts Python callables and sub-agents into clean LLM provider schemas, with parameter serialization and hallucination schema recovery."""
         serialized = []
         existing_names = set()
@@ -126,6 +144,7 @@ class Agent:
             else:
                 # Dynamically construct a valid OpenAI/Anthropic function schema footprint
                 import inspect
+
                 properties = {}
                 required = []
                 try:
