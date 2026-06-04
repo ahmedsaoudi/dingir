@@ -1,12 +1,13 @@
-import re
+import json
+import random
 import urllib.parse
 
 import requests
+from bs4 import BeautifulSoup
 
 
 def web_search(query: str) -> str:
-    """Performs a web search to find relevant information about a given query. Returns the top results as numbered snippets."""
-    import random
+    """Performs a web search to find relevant information about a given query. Returns the top results as JSON."""
 
     user_agents = [
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -24,26 +25,41 @@ def web_search(query: str) -> str:
         "Upgrade-Insecure-Requests": "1",
     }
 
-    # Helper to parse DuckDuckGo HTML snippets across Standard and Lite interfaces
-    def parse_html_snippets(html_text: str) -> list:
-        # 1. Standard HTML version snippets
-        snips = re.findall(
-            r'<a[^>]*class="[^"]*result__snippet[^"]*"[^>]*>(.*?)</a>',
-            html_text,
-            re.DOTALL,
-        )
-        # 2. Fallback to Lite version snippets
-        if not snips:
-            snips = re.findall(
-                r'<td[^>]*class="[^"]*result-snippet[^"]*"[^>]*>(.*?)</td>',
-                html_text,
-                re.DOTALL,
-            )
-        return snips
+    def parse_standard_results(soup: BeautifulSoup) -> list[tuple[str, str]]:
+        """Parse results from the standard DuckDuckGo HTML interface."""
+        results = []
+        for result_div in soup.select(".result"):
+            link_tag = result_div.select_one("a.result__a")
+            snippet_tag = result_div.select_one("a.result__snippet")
+            url = link_tag["href"] if link_tag and link_tag.has_attr("href") else ""
+            snippet = snippet_tag.get_text(strip=True) if snippet_tag else ""
+            if url or snippet:
+                results.append((url, snippet))
+        return results
 
-    url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
+    def parse_lite_results(soup: BeautifulSoup) -> list[tuple[str, str]]:
+        """Parse results from the DuckDuckGo Lite interface."""
+        results = []
+        link_tags = soup.select("a.result-link")
+        snippet_tags = soup.select("td.result-snippet")
+        for link_tag, snippet_tag in zip(link_tags, snippet_tags):
+            url = link_tag["href"] if link_tag.has_attr("href") else ""
+            snippet = snippet_tag.get_text(strip=True) if snippet_tag else ""
+            if url or snippet:
+                results.append((url, snippet))
+        return results
+
+    def parse_html_results(html_text: str) -> list[tuple[str, str]]:
+        """Parse DuckDuckGo HTML results using BeautifulSoup, with Lite fallback."""
+        soup = BeautifulSoup(html_text, "html.parser")
+        results = parse_standard_results(soup)
+        if not results:
+            results = parse_lite_results(soup)
+        return results
+
+    search_url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
     try:
-        response = requests.get(url, headers=headers, timeout=10)
+        response = requests.get(search_url, headers=headers, timeout=10)
 
         # If rate limited (202) or fails, fallback to Lite version via POST
         if response.status_code == 202 or response.status_code != 200:
@@ -58,18 +74,15 @@ def web_search(query: str) -> str:
             )
 
         if response.status_code == 200:
-            snippets = parse_html_snippets(response.text)
-            if snippets:
+            parsed = parse_html_results(response.text)
+            if parsed:
                 results = []
-                for i, snip in enumerate(snippets[:5]):
-                    clean_snip = re.sub(r"<[^>]+>", "", snip).strip()
-                    clean_snip = (
-                        clean_snip.replace("&amp;", "&")
-                        .replace("&quot;", '"')
-                        .replace("&#x27;", "'")
-                    )
-                    results.append(f"{i + 1}. {clean_snip}")
-                return "\n\n".join(results)
+                for i, (link, snip) in enumerate(parsed[:5]):
+                    entry = {"rank": i + 1, "snippet": snip}
+                    if link:
+                        entry["url"] = link
+                    results.append(entry)
+                return json.dumps(results, indent=2)
             return "No results found."
         return f"Search failed with status code {response.status_code}."
     except Exception as e:
@@ -82,16 +95,11 @@ def fetch_webpage(url: str) -> str:
     try:
         response = requests.get(url, headers=headers, timeout=10)
         if response.status_code == 200:
-            text = response.text
+            soup = BeautifulSoup(response.text, "html.parser")
             # Remove scripts and styles
-            text = re.sub(
-                r"<script[^>]*>.*?</script>", "", text, flags=re.DOTALL
-            )
-            text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL)
-            # Remove all other HTML tags
-            clean_text = re.sub(r"<[^>]+>", "", text)
-            # Normalize whitespace
-            clean_text = re.sub(r"\s+", " ", clean_text).strip()
+            for tag in soup(["script", "style"]):
+                tag.decompose()
+            clean_text = soup.get_text(separator=" ", strip=True)
             return clean_text[:4000]
         return f"Webpage fetch failed with status code {response.status_code}."
     except Exception as e:

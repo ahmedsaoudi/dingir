@@ -5,7 +5,7 @@ from typing import Callable
 
 
 def secure_action(require_approval: bool = True):
-    """Django-grade security middleware gate for strict type verification and HITL approval."""
+    """Security middleware gate for strict type verification and HITL approval."""
 
     def decorator(func: Callable):
         @functools.wraps(func)

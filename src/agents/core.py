@@ -64,39 +64,40 @@ class Agent:
                     desc.strip() if desc else "No description provided."
                 )
 
-                # Format parameters for this tool
-                param_lines = []
-                for p_name, p_info in properties.items():
-                    p_type = p_info.get("type", "any")
-                    p_desc = p_info.get("description", "").strip()
-                    p_req = "required" if p_name in required else "optional"
-                    p_desc_suffix = f": {p_desc}" if p_desc else ""
-                    param_lines.append(
-                        f"    * {p_name} ({p_type}, {p_req}){p_desc_suffix}"
-                    )
-
-                param_str = (
-                    "\n" + "\n".join(param_lines)
-                    if param_lines
-                    else " (No parameters)"
-                )
                 tool_descriptions.append(
-                    f"- **{name}**: {clean_desc}\n  Parameters:{param_str}"
+                    {
+                        "name": name,
+                        "description": clean_desc,
+                        "parameters": {
+                            "properties": properties,
+                            "required": required,
+                        },
+                    }
                 )
 
-            tool_descriptions_str = "\n\n".join(tool_descriptions)
+            tool_descriptions_json = json.dumps(
+                tool_descriptions, indent=2
+            )
 
             # Enrich system prompt with a comprehensive instruction framework
             tools_instruction_block = (
                 "\n\n"
-                "### TOOL INTEGRATION PROTOCOLS\n"
-                "You have access to the following toolset to assist in resolving the user instruction:\n\n"
-                f"{tool_descriptions_str}\n\n"
-                "### TOOL EXECUTION GUIDELINES\n"
-                "1. **Selection & Relevance**: Analyze the user query and select the most appropriate tool from the toolset above. If no tool is needed or suitable, respond directly using your general knowledge.\n"
-                "2. **Arguments & Type Constraints**: When executing a tool call, ensure you strictly adhere to the types, descriptions, and required constraints defined in the parameter schema.\n"
-                "3. **JSON Structure**: All arguments must be passed as a valid JSON object matching the defined parameter structure.\n"
-                "4. **Execution Flow**: Always execute the tool through the provider's native tool-calling interface. Do not simulate or mock tool responses in your text content."
+                "You are a model that assists in resolving "
+                "the user instruction. To do so, you can do function calling "
+                "with the following functions:\n\n"
+                f"{tool_descriptions_json}\n\n"
+                "TOOL EXECUTION GUIDELINES:\n"
+                "1. Analyze the user query and select the most appropriate "
+                "tool from the toolset above. If no tool is needed or "
+                "suitable, respond directly using your general knowledge.\n"
+                "2. When executing a tool call, ensure you strictly adhere "
+                "to the types, descriptions, and required constraints "
+                "defined in the parameter schema.\n"
+                "3. All arguments must be passed as a valid JSON object "
+                "matching the defined parameter structure.\n"
+                "4. Always execute the tool through the provider's native "
+                "tool-calling interface. Do not simulate or mock tool "
+                "responses in your text content."
             )
             self.system = f"{system}{tools_instruction_block}"
         else:
@@ -132,7 +133,10 @@ class Agent:
     def _get_serialized_tools(
         self, chat: Optional[Chat] = None
     ) -> List[Dict[str, Any]]:
-        """FIX 1 & 2: Converts Python callables and sub-agents into clean LLM provider schemas, with parameter serialization and hallucination schema recovery."""
+        """
+        Converts Python callables and sub-agents into clean LLM provider
+        schemas, with parameter serialization and hallucination schema recovery.
+        """
         serialized = []
         existing_names = set()
         for t in self.tools:
