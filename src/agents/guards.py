@@ -4,6 +4,7 @@ import sys
 
 class GuardError(Exception):
     """Base exception class for all guard-related failures."""
+
     pass
 
 
@@ -17,7 +18,9 @@ class Guard:
 
     def __call__(self, chat: Any = None) -> None:
         """Execute the guard check on the current chat state."""
-        raise NotImplementedError("Custom guards must implement __call__(self, chat)")
+        raise NotImplementedError(
+            "Custom guards must implement __call__(self, chat)"
+        )
 
 
 def default_approval_handler(prompt: str, payload: Any = None) -> bool:
@@ -30,12 +33,14 @@ def default_approval_handler(prompt: str, payload: Any = None) -> bool:
     if payload:
         print(f"   Payload: {payload}")
     try:
-        confirm = input("👉 Authorize action implementation turn? (y/N): ").strip().lower()
+        confirm = (
+            input("👉 Authorize action implementation turn? (y/N): ")
+            .strip()
+            .lower()
+        )
         return confirm in ("y", "yes")
     except EOFError:
-        raise GuardError(
-            f"Approval requested but stdin reached EOF: {prompt}"
-        )
+        raise GuardError(f"Approval requested but stdin reached EOF: {prompt}")
 
 
 _approval_handler: Callable[[str, Any], bool] = default_approval_handler
@@ -50,4 +55,3 @@ def set_approval_handler(handler: Callable[[str, Any], bool]) -> None:
 def get_approval_handler() -> Callable[[str, Any], bool]:
     """Gets the currently active approval handler."""
     return _approval_handler
-

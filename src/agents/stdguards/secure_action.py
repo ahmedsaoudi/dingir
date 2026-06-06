@@ -41,9 +41,11 @@ class SecureAction(Guard):
                     if self.require_approval:
                         handler = get_approval_handler()
                         prompt = f"Authorization requested for tool execution: '{tc.get('name')}'"
-                        payload = tc.get('arguments')
+                        payload = tc.get("arguments")
                         if not handler(prompt, payload=payload):
-                            raise GuardError("EXECUTION BLOCKED: Operation rejected by safety supervisor operator.")
+                            raise GuardError(
+                                "EXECUTION BLOCKED: Operation rejected by safety supervisor operator."
+                            )
             return None
 
         # Case 2: Decorator with args, Python passes the function to wrap
