@@ -214,7 +214,7 @@ class Agent:
         self,
         chat: Chat,
         message: Optional[str] = None,
-        on_step_callback: Optional[Callable[[Chat], None]] = None,
+        on_step_callback: Optional[Callable[[Chat], None] | List[Callable[[Chat], None]]] = None,
     ):
         if not chat.system:
             chat.system = self.system
@@ -223,8 +223,6 @@ class Agent:
         if message:
             chat.add_message(role="user", content=message)
         while True:
-            if on_step_callback:
-                on_step_callback(chat)
             serializable_messages = [m.__dict__ for m in chat.messages]
 
             # FIX 2: Pass the generated JSON schemas, NOT the raw Python function objects
@@ -239,6 +237,12 @@ class Agent:
                     content=result["content"],
                     tool_calls=result["tool_calls"],
                 )
+                if on_step_callback:
+                    if isinstance(on_step_callback, (list, tuple)):
+                        for cb in on_step_callback:
+                            cb(chat)
+                    else:
+                        on_step_callback(chat)
                 for tc in result["tool_calls"]:
                     output = self._execute_tool_sync(
                         tc["name"], tc["arguments"]
@@ -252,4 +256,10 @@ class Agent:
                 continue
 
             chat.add_message(role="assistant", content=result["content"])
+            if on_step_callback:
+                if isinstance(on_step_callback, (list, tuple)):
+                    for cb in on_step_callback:
+                        cb(chat)
+                else:
+                    on_step_callback(chat)
             break
