@@ -36,6 +36,7 @@ packages = [
     "dingir.agents",
     "dingir.agents.llms",
     "dingir.agents.stdtools",
+    "dingir.agents.stdguards",
     "dingir.rag",
     "dingir.rag.stores",
 ]
