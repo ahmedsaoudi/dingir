@@ -1,4 +1,5 @@
-from typing import Any, Callable
+from typing import Any, Callable, Dict
+import functools
 import sys
 
 
@@ -55,3 +56,28 @@ def set_approval_handler(handler: Callable[[str, Any], bool]) -> None:
 def get_approval_handler() -> Callable[[str, Any], bool]:
     """Gets the currently active approval handler."""
     return _approval_handler
+
+
+def guard_tool(
+    tool: Callable[..., Any], *guards: Callable[[Dict[str, Any]], None]
+) -> Callable[..., Any]:
+    """Wraps a tool callable with a list of tool-level guards.
+
+    Each guard is called with a dictionary of the bound tool arguments
+    before the underlying tool is executed.
+    """
+    import inspect
+
+    @functools.wraps(tool)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        sig = inspect.signature(tool)
+        bound = sig.bind(*args, **kwargs)
+        bound.apply_defaults()
+
+        # Execute guards in order
+        for guard in guards:
+            guard(bound.arguments)
+
+        return tool(*args, **kwargs)
+
+    return wrapper

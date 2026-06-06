@@ -1,6 +1,7 @@
 import json
 from typing import Any, Callable, Dict, List, Optional
 
+from dingir.agents.guards import GuardError
 from dingir.log import Log
 from dingir.memory import Memory
 
@@ -167,6 +168,8 @@ class Agent:
                 self.log.merge(tool_func.log)
 
             return result
+        except GuardError:
+            raise
         except Exception as e:
             return f"EXECUTION FAULT: {str(e)}"
 
