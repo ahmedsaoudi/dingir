@@ -1,7 +1,8 @@
 import json
 from typing import Any, Callable, Dict, List, Optional
 
-from dingir.chat import Chat
+from dingir.log import Log
+from dingir.memory import Memory
 
 
 class Agent:
@@ -110,12 +111,44 @@ class Agent:
         )
         self.__doc__ = self.description
 
+        # Agent-owned log and memory
+        self.log = Log()
+        self.memory = Memory(system=self.system)
+
+        # Record initial configuration
+        self.log.record(
+            "config",
+            {
+                "model_id": self.model.id,
+                "config": self.model.config.__dict__
+                if hasattr(self.model.config, "__dict__")
+                else str(self.model.config),
+            },
+            agent_name=self.__name__,
+        )
+
     def __call__(self, instruction: str) -> str:
         """Executes subagent handoffs cleanly while preserving internal state isolation."""
-        scratchpad = Chat(system=self.system)
-        self.respond(scratchpad, message=instruction)
+        # Subagent mode: use a temporary memory, run the task, return the answer.
+        # The caller (parent agent) is responsible for merging self.log afterwards.
+        self.memory = Memory(system=self.system)
+        self.log.clear()
+
+        # Re-record config for this fresh run
+        self.log.record(
+            "config",
+            {
+                "model_id": self.model.id,
+                "config": self.model.config.__dict__
+                if hasattr(self.model.config, "__dict__")
+                else str(self.model.config),
+            },
+            agent_name=self.__name__,
+        )
+
+        self.respond(message=instruction)
         return (
-            scratchpad.last_message.content if scratchpad.last_message else ""
+            self.memory.last.content if self.memory.last else ""
         )
 
     def _execute_tool_sync(self, name: str, args: Any) -> str:
@@ -125,14 +158,19 @@ class Agent:
         try:
             resolved_args = json.loads(args) if isinstance(args, str) else args
             if isinstance(resolved_args, dict):
-                return str(tool_func(**resolved_args))
-            return str(tool_func(resolved_args))
+                result = str(tool_func(**resolved_args))
+            else:
+                result = str(tool_func(resolved_args))
+
+            # If the tool is a sub-agent, merge its log into ours
+            if isinstance(tool_func, Agent):
+                self.log.merge(tool_func.log)
+
+            return result
         except Exception as e:
             return f"EXECUTION FAULT: {str(e)}"
 
-    def _get_serialized_tools(
-        self, chat: Optional[Chat] = None
-    ) -> List[Dict[str, Any]]:
+    def _get_serialized_tools(self) -> List[Dict[str, Any]]:
         """
         Converts Python callables and sub-agents into clean LLM provider
         schemas, with parameter serialization and hallucination schema recovery.
@@ -188,78 +226,104 @@ class Agent:
                 )
 
         # Inject dummy definitions for hallucinated/missing tools to prevent API gateway validation errors
-        if chat:
-            for m in chat.messages:
-                if m.tool_calls:
-                    for tc in m.tool_calls:
-                        name = tc.get("name")
-                        if name and name not in existing_names:
-                            existing_names.add(name)
-                            serialized.append(
-                                {
-                                    "type": "function",
-                                    "function": {
-                                        "name": name,
-                                        "description": "Hallucinated or unavailable tool helper.",
-                                        "parameters": {
-                                            "type": "object",
-                                            "properties": {},
-                                        },
+        for m in self.memory.messages:
+            if m.tool_calls:
+                for tc in m.tool_calls:
+                    name = tc.get("name")
+                    if name and name not in existing_names:
+                        existing_names.add(name)
+                        serialized.append(
+                            {
+                                "type": "function",
+                                "function": {
+                                    "name": name,
+                                    "description": "Hallucinated or unavailable tool helper.",
+                                    "parameters": {
+                                        "type": "object",
+                                        "properties": {},
                                     },
-                                }
-                            )
+                                },
+                            }
+                        )
         return serialized
 
     def respond(
         self,
-        chat: Chat,
         message: Optional[str] = None,
-        on_step_callback: Optional[Callable[[Chat], None] | List[Callable[[Chat], None]]] = None,
+        on_step_callback: Optional[Callable[["Agent"], None] | List[Callable[["Agent"], None]]] = None,
     ):
-        if not chat.system:
-            chat.system = self.system
-        elif self.system not in chat.system:
-            chat.system = f"{chat.system} {self.system}"
         if message:
-            chat.add_message(role="user", content=message)
+            self.memory.add(role="user", content=message)
+            self.log.record(
+                "message",
+                {"role": "user", "content": message},
+                agent_name=self.__name__,
+            )
         while True:
-            serializable_messages = [m.__dict__ for m in chat.messages]
+            serializable_messages = self.memory.to_messages()
 
-            # FIX 2: Pass the generated JSON schemas, NOT the raw Python function objects
-            tool_schemas = self._get_serialized_tools(chat)
+            tool_schemas = self._get_serialized_tools()
             result = self.model.request(
-                self.system, serializable_messages, tool_schemas
+                self.memory.system, serializable_messages, tool_schemas
             )
 
             if result.get("tool_calls"):
-                chat.add_message(
+                self.memory.add(
                     role="assistant",
                     content=result["content"],
                     tool_calls=result["tool_calls"],
                 )
+                self.log.record(
+                    "message",
+                    {
+                        "role": "assistant",
+                        "content": result["content"],
+                        "tool_calls": result["tool_calls"],
+                    },
+                    agent_name=self.__name__,
+                )
                 if on_step_callback:
                     if isinstance(on_step_callback, (list, tuple)):
                         for cb in on_step_callback:
-                            cb(chat)
+                            cb(self)
                     else:
-                        on_step_callback(chat)
+                        on_step_callback(self)
                 for tc in result["tool_calls"]:
+                    self.log.record(
+                        "tool_call",
+                        {"name": tc["name"], "arguments": tc["arguments"]},
+                        agent_name=self.__name__,
+                    )
                     output = self._execute_tool_sync(
                         tc["name"], tc["arguments"]
                     )
-                    chat.add_message(
+                    self.memory.add(
                         role="tool",
                         content=output,
                         tool_call_id=tc.get("id", "call_idx"),
                         name=tc["name"],
                     )
+                    self.log.record(
+                        "tool_result",
+                        {
+                            "name": tc["name"],
+                            "tool_call_id": tc.get("id", "call_idx"),
+                            "output": output,
+                        },
+                        agent_name=self.__name__,
+                    )
                 continue
 
-            chat.add_message(role="assistant", content=result["content"])
+            self.memory.add(role="assistant", content=result["content"])
+            self.log.record(
+                "message",
+                {"role": "assistant", "content": result["content"]},
+                agent_name=self.__name__,
+            )
             if on_step_callback:
                 if isinstance(on_step_callback, (list, tuple)):
                     for cb in on_step_callback:
-                        cb(chat)
+                        cb(self)
                 else:
-                    on_step_callback(chat)
+                    on_step_callback(self)
             break

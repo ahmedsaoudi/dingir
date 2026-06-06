@@ -33,11 +33,11 @@ class SecureAction(Guard):
             # Case 1: Decorated function is being invoked
             return self.wrapped(*args, **kwargs)
 
-        # Check if used as a step guard (called with Chat object)
-        if len(args) == 1 and hasattr(args[0], "messages"):
-            chat = args[0]
-            if chat.last_message and chat.last_message.tool_calls:
-                for tc in chat.last_message.tool_calls:
+        # Check if used as a step guard (called with Agent object)
+        if len(args) == 1 and hasattr(args[0], "memory"):
+            agent = args[0]
+            if agent.memory.last and agent.memory.last.tool_calls:
+                for tc in agent.memory.last.tool_calls:
                     if self.require_approval:
                         handler = get_approval_handler()
                         prompt = f"Authorization requested for tool execution: '{tc.get('name')}'"

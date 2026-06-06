@@ -12,14 +12,14 @@ class Guard:
     """Base class for all agent guards.
 
     To write a custom guard, inherit from this class and implement the
-    `__call__` method. The method should accept the `chat` context and raise
+    `__call__` method. The method should accept the `agent` context and raise
     a `GuardError` (or a subclass of it) if the guard check fails.
     """
 
-    def __call__(self, chat: Any = None) -> None:
-        """Execute the guard check on the current chat state."""
+    def __call__(self, agent: Any = None) -> None:
+        """Execute the guard check on the current agent state."""
         raise NotImplementedError(
-            "Custom guards must implement __call__(self, chat)"
+            "Custom guards must implement __call__(self, agent)"
         )
 
 

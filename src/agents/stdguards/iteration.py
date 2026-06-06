@@ -23,6 +23,6 @@ class IterationGuard(Guard):
                 f"Agent stopped: maximum iteration limit of {self.max_iterations} reached."
             )
 
-    def __call__(self, chat: Any = None) -> None:
+    def __call__(self, agent: Any = None) -> None:
         """Allows using the guard as a callback function."""
         self.check()
