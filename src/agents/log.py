@@ -260,10 +260,11 @@ def _format_log(
                 status = e_content.get("status", "failed")
                 constraints = e_content.get("constraints", {})
                 tool_msg = f" on tool '{e_content['applied_to_tool']}'" if "applied_to_tool" in e_content else ""
-                
+                agent_msg = f" on agent '{e_content['applied_to_agent']}'" if "applied_to_agent" in e_content else ""
+
                 status_upper = status.upper()
                 lines.append(
-                    f"{indent}  [{e_timestamp}] guard_trigger: Guard '{g_type}'{tool_msg} {status_upper}! "
+                    f"{indent}  [{e_timestamp}] guard_trigger: Guard '{g_type}'{tool_msg}{agent_msg} {status_upper}! "
                     f"Details: {err_msg} | Constraints: {constraints}{meta}"
                 )
             else:
