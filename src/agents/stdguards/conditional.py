@@ -6,18 +6,32 @@ from dingir.agents.guards import Guard
 class IfGuard(Guard):
     """Conditional guard that only runs an inner guard if a condition is met.
 
-    Example:
-         # Stop agent after 5 iterations only if the last message contains "help"
-         guard = IfGuard(
-             condition=lambda agent: "help" in (agent.memory.last.content if agent and agent.memory.last else ""),
-             guard=IterationGuard(5)
-         )
+    The inner guard is invoked via its full ``__call__`` path so that
+    its own logging and dispatch logic are preserved.
+
+    Example::
+
+        guard = IfGuard(
+            condition=lambda agent: "help" in (
+                agent.memory.last.content
+                if agent and agent.memory.last else ""
+            ),
+            guard=IterationGuard(5),
+        )
     """
 
-    def __init__(self, condition: Callable[[Any], bool], guard: Callable[[Any], None]):
+    def __init__(
+        self,
+        condition: Callable[[Any], bool],
+        guard: "Guard",
+        log: bool = True,
+    ):
+        super().__init__(log=log)
         self.condition = condition
-        self.guard = guard
+        self.inner_guard = guard
 
-    def __call__(self, agent: Any = None) -> None:
+    def check_step(self, agent: Any = None) -> None:
+        """Evaluate the condition and delegate to the inner guard if met."""
         if self.condition(agent):
-            self.guard(agent)
+            # Invoke via __call__ so the inner guard's auto-logging fires.
+            self.inner_guard(agent)

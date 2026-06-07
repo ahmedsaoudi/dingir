@@ -169,9 +169,13 @@ class Agent:
         )
 
     def _execute_tool_sync(self, name: str, args: Any) -> str:
+        from dingir.agents.guards import _active_agent
+
         tool_func = next((t for t in self.tools if t.__name__ == name), None)
         if not tool_func:
             return f"ERROR: Function execution endpoint '{name}' unavailable."
+
+        token = _active_agent.set(self)
         try:
             resolved_args = json.loads(args) if isinstance(args, str) else args
             if isinstance(resolved_args, dict):
@@ -188,6 +192,8 @@ class Agent:
             raise
         except Exception as e:
             return f"EXECUTION FAULT: {str(e)}"
+        finally:
+            _active_agent.reset(token)
 
     def _get_serialized_tools(self) -> List[Dict[str, Any]]:
         """
