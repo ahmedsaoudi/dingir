@@ -28,20 +28,23 @@ class Agent:
             tool_descriptions = []
             for t in self.tools:
                 # Extract schema information
-                if hasattr(t, "_dingir_schema"):
-                    func = t._dingir_schema.get("function", {})
-                    tool_name = func.get("name", getattr(t, "__name__", "unknown"))
+                t_unwrapped = t
+                while hasattr(t_unwrapped, "__wrapped__"):
+                    t_unwrapped = t_unwrapped.__wrapped__
+                if hasattr(t_unwrapped, "_dingir_schema"):
+                    func = t_unwrapped._dingir_schema.get("function", {})
+                    tool_name = func.get("name", getattr(t_unwrapped, "__name__", "unknown"))
                     desc = func.get(
                         "description",
-                        getattr(t, "__doc__", "No description provided."),
+                        getattr(t_unwrapped, "__doc__", "No description provided."),
                     )
                     properties = func.get("parameters", {}).get(
                         "properties", {}
                     )
                     required = func.get("parameters", {}).get("required", [])
                 else:
-                    tool_name = getattr(t, "__name__", "unknown")
-                    desc = getattr(t, "__doc__", "No description provided.")
+                    tool_name = getattr(t_unwrapped, "__name__", "unknown")
+                    desc = getattr(t_unwrapped, "__doc__", "No description provided.")
                     properties = {}
                     required = []
                     try:
@@ -193,10 +196,26 @@ class Agent:
         except GuardError as e:
             return f"GUARD ERROR: {str(e)}"
         except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
+            self.log.record(
+                "exception",
+                {
+                    "exception_type": e.__class__.__name__,
+                    "message": str(e),
+                    "traceback": tb,
+                    "tool_name": name,
+                    "arguments": args,
+                },
+                agent_name=self.__name__,
+            )
             return f"EXECUTION FAULT: {str(e)}"
         finally:
-            if isinstance(tool_func, Agent):
-                self.log.merge(tool_func.log)
+            unwrapped = tool_func
+            while hasattr(unwrapped, "__wrapped__"):
+                unwrapped = unwrapped.__wrapped__
+            if isinstance(unwrapped, Agent):
+                self.log.merge(unwrapped.log)
             _active_agent.reset(token)
 
     def _get_serialized_tools(self) -> List[Dict[str, Any]]:
@@ -208,8 +227,11 @@ class Agent:
         existing_names = set()
         for t in self.tools:
             # Check if it's a sub-agent or custom tool with an explicit predefined schema
-            if hasattr(t, "_dingir_schema"):
-                schema = t._dingir_schema
+            t_unwrapped = t
+            while hasattr(t_unwrapped, "__wrapped__"):
+                t_unwrapped = t_unwrapped.__wrapped__
+            if hasattr(t_unwrapped, "_dingir_schema"):
+                schema = t_unwrapped._dingir_schema
                 existing_names.add(schema.get("function", {}).get("name", ""))
                 serialized.append(schema)
             else:
@@ -219,7 +241,7 @@ class Agent:
                 properties = {}
                 required = []
                 try:
-                    sig = inspect.signature(t)
+                    sig = inspect.signature(t_unwrapped)
                     for param_name, param in sig.parameters.items():
                         if param_name in ["top_k"]:
                             continue
@@ -237,7 +259,7 @@ class Agent:
                 except Exception:
                     pass
 
-                existing_names.add(t.__name__)
+                existing_names.add(t_unwrapped.__name__)
                 serialized.append(
                     {
                         "type": "function",
@@ -281,87 +303,113 @@ class Agent:
         message: Optional[str] = None,
         on_step_callback: Optional[Callable[["Agent"], None] | List[Callable[["Agent"], None]]] = None,
     ):
-        # Combine default guards and runtime callbacks
-        cbs = list(self.guards)
-        if on_step_callback:
-            if isinstance(on_step_callback, (list, tuple)):
-                cbs.extend(on_step_callback)
-            else:
-                cbs.append(on_step_callback)
+        try:
+            # Combine default guards and runtime callbacks
+            cbs = list(self.guards)
+            if on_step_callback:
+                if isinstance(on_step_callback, (list, tuple)):
+                    cbs.extend(on_step_callback)
+                else:
+                    cbs.append(on_step_callback)
 
-        self.log.guards = cbs
+            self.log.guards = cbs
 
-        if message:
-            self.memory.add(role="user", content=message)
-            self.log.record(
-                "message",
-                {"role": "user", "content": message},
-                agent_name=self.__name__,
-            )
-        while True:
-            # Execute step callbacks at the start of the iteration
-            if cbs:
-                for cb in cbs:
-                    cb(self)
-
-            serializable_messages = self.memory.to_messages()
-
-            tool_schemas = self._get_serialized_tools()
-            result = self.model.request(
-                self.memory.system, serializable_messages, tool_schemas
-            )
-
-            if result.get("tool_calls"):
-                self.memory.add(
-                    role="assistant",
-                    content=result["content"],
-                    tool_calls=result["tool_calls"],
-                )
+            if message:
+                self.memory.add(role="user", content=message)
                 self.log.record(
                     "message",
-                    {
+                    {"role": "user", "content": message},
+                    agent_name=self.__name__,
+                )
+            while True:
+                # Execute step callbacks at the start of the iteration
+                if cbs:
+                    for cb in cbs:
+                        cb(self)
+
+                serializable_messages = self.memory.to_messages()
+
+                tool_schemas = self._get_serialized_tools()
+                result = self.model.request(
+                    self.memory.system, serializable_messages, tool_schemas
+                )
+
+                reasoning = result.get("reasoning_content")
+
+                if result.get("tool_calls"):
+                    self.memory.add(
+                        role="assistant",
+                        content=result["content"],
+                        tool_calls=result["tool_calls"],
+                    )
+                    log_content = {
                         "role": "assistant",
                         "content": result["content"],
                         "tool_calls": result["tool_calls"],
-                    },
+                    }
+                    if reasoning:
+                        log_content["reasoning_content"] = reasoning
+                    self.log.record(
+                        "message",
+                        log_content,
+                        agent_name=self.__name__,
+                    )
+                    if cbs:
+                        for cb in cbs:
+                            cb(self)
+                    for tc in result["tool_calls"]:
+                        self.log.record(
+                            "tool_call",
+                            {"name": tc["name"], "arguments": tc["arguments"]},
+                            agent_name=self.__name__,
+                        )
+                        output = self._execute_tool_sync(
+                            tc["name"], tc["arguments"]
+                        )
+                        self.memory.add(
+                            role="tool",
+                            content=output,
+                            tool_call_id=tc.get("id", "call_idx"),
+                            name=tc["name"],
+                        )
+                        self.log.record(
+                            "tool_result",
+                            {
+                                "name": tc["name"],
+                                "tool_call_id": tc.get("id", "call_idx"),
+                                "output": output,
+                            },
+                            agent_name=self.__name__,
+                        )
+                    continue
+
+                self.memory.add(role="assistant", content=result["content"])
+                log_content = {"role": "assistant", "content": result["content"]}
+                if reasoning:
+                    log_content["reasoning_content"] = reasoning
+                self.log.record(
+                    "message",
+                    log_content,
                     agent_name=self.__name__,
                 )
                 if cbs:
                     for cb in cbs:
                         cb(self)
-                for tc in result["tool_calls"]:
-                    self.log.record(
-                        "tool_call",
-                        {"name": tc["name"], "arguments": tc["arguments"]},
-                        agent_name=self.__name__,
-                    )
-                    output = self._execute_tool_sync(
-                        tc["name"], tc["arguments"]
-                    )
-                    self.memory.add(
-                        role="tool",
-                        content=output,
-                        tool_call_id=tc.get("id", "call_idx"),
-                        name=tc["name"],
-                    )
-                    self.log.record(
-                        "tool_result",
-                        {
-                            "name": tc["name"],
-                            "tool_call_id": tc.get("id", "call_idx"),
-                            "output": output,
-                        },
-                        agent_name=self.__name__,
-                    )
-                continue
-
-            self.memory.add(role="assistant", content=result["content"])
-            self.log.record(
-                "message",
-                {"role": "assistant", "content": result["content"]},
-                agent_name=self.__name__,
-            )
-            if cbs:
-                for cb in cbs:
-                    cb(self)
-            break
+                break
+        except Exception as e:
+            if not getattr(e, "_agent_logged", False):
+                import traceback
+                self.log.record(
+                    "exception",
+                    {
+                        "exception_type": e.__class__.__name__,
+                        "message": str(e),
+                        "traceback": traceback.format_exc(),
+                    },
+                    agent_name=self.__name__,
+                )
+                try:
+                    e._agent_logged = True
+                except AttributeError:
+                    pass
+            raise

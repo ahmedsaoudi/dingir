@@ -118,7 +118,6 @@ class OpenAI(BaseLLM):
         response = self.sync_client.chat.completions.create(**args)
         choice = response.choices[0].message
 
-        # Normalize tool calls structures down to standard primitive dict shapes
         tc_out = None
         if getattr(choice, "tool_calls", None):
             tc_out = [
@@ -130,7 +129,22 @@ class OpenAI(BaseLLM):
                 for tc in choice.tool_calls
             ]
 
-        return {"content": choice.content or "", "tool_calls": tc_out}
+        reasoning = getattr(choice, "reasoning_content", None)
+        content = choice.content or ""
+
+        # Fallback to parse tags <think>...</think> or <|think|>...</|think|> if no native reasoning_content is returned
+        if not reasoning and content:
+            import re
+            match = re.search(r'<(?:think|\|think\|)>(.*?)</(?:think|\|think\|)>', content, re.DOTALL)
+            if match:
+                reasoning = match.group(1).strip()
+                content = re.sub(r'<(?:think|\|think\|)>.*?</(?:think|\|think\|)>\s*', '', content, flags=re.DOTALL).strip()
+
+        return {
+            "content": content,
+            "tool_calls": tc_out,
+            "reasoning_content": reasoning,
+        }
 
     def embed(self, texts: List[str]) -> List[List[float]]:
         """Integrated symmetrical embedding implementation hook."""

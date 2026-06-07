@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterator, List, Optional
 
 
-ENTRY_TYPES = {"config", "message", "tool_call", "tool_result", "subagent_log", "guard_trigger"}
+ENTRY_TYPES = {"config", "message", "tool_call", "tool_result", "subagent_log", "guard_trigger", "exception", "error"}
 
 
 def _serialize_guard(g: Any) -> Dict[str, Any]:
@@ -138,29 +138,33 @@ class Log:
         serialized_tools = []
         for t in self.tools:
             s_tool = None
+            t_unwrapped = t
+            while hasattr(t_unwrapped, "__wrapped__"):
+                t_unwrapped = t_unwrapped.__wrapped__
+
             if isinstance(t, str):
                 s_tool = {"name": t}
             elif isinstance(t, dict):
                 s_tool = dict(t)
-            elif hasattr(t, "_dingir_schema"):
-                func = t._dingir_schema.get("function", {})
+            elif hasattr(t_unwrapped, "_dingir_schema"):
+                func = t_unwrapped._dingir_schema.get("function", {})
                 s_tool = {
-                    "name": func.get("name", getattr(t, "__name__", "unknown")),
-                    "description": func.get("description", getattr(t, "__doc__", "No description provided.")),
+                    "name": func.get("name", getattr(t_unwrapped, "__name__", "unknown")),
+                    "description": func.get("description", getattr(t_unwrapped, "__doc__", "No description provided.")),
                     "parameters": func.get("parameters", {}),
                 }
-            elif hasattr(t, "__name__"):
+            elif hasattr(t_unwrapped, "__name__"):
                 s_tool = {
-                    "name": t.__name__,
-                    "description": getattr(t, "__doc__", "") or "No description provided.",
+                    "name": t_unwrapped.__name__,
+                    "description": getattr(t_unwrapped, "__doc__", "") or "No description provided.",
                 }
-            elif hasattr(t, "name"):
+            elif hasattr(t_unwrapped, "name"):
                 s_tool = {
-                    "name": t.name,
-                    "description": getattr(t, "description", "") or "No description provided.",
+                    "name": t_unwrapped.name,
+                    "description": getattr(t_unwrapped, "description", "") or "No description provided.",
                 }
             else:
-                s_tool = {"name": str(t)}
+                s_tool = {"name": str(t_unwrapped)}
 
             tool_guards = getattr(t, "_dingir_guards", None)
             if tool_guards:
@@ -197,7 +201,8 @@ class Log:
     def __len__(self) -> int:
         return len(self._entries)
 
-    def __str__(self) -> str:
+    def format(self, indent_level: int = 0) -> str:
+        """Format the log hierarchy with padding/indentation."""
         return _format_log(
             system_prompt=self.system_prompt,
             tools=self.tools,
@@ -206,8 +211,25 @@ class Log:
             model_id=self.model_id,
             model_config=self.model_config,
             guards=self.guards,
-            indent_level=0,
+            indent_level=indent_level,
         )
+
+    def __str__(self) -> str:
+        return self.format()
+
+
+def _indent_text(text: str, indent_level: int) -> str:
+    """Indent a block of text by a specified number of levels (each level is 2 spaces)."""
+    indent = "  " * indent_level
+    return "\n".join(indent + line for line in text.splitlines())
+
+
+def _format_model_config(config: Any) -> str:
+    """Format model configurations pythonically by excluding private keys and None values."""
+    if isinstance(config, dict):
+        filtered = {k: v for k, v in config.items() if not k.startswith("_") and v is not None}
+        return ", ".join(f"{k}={v}" for k, v in filtered.items())
+    return str(config)
 
 
 def _format_log(
@@ -231,15 +253,7 @@ def _format_log(
 
     # 2. Model Config
     if model_config is not None:
-        if isinstance(model_config, dict):
-            try:
-                import json
-                config_str = json.dumps(model_config)
-            except Exception:
-                config_str = str(model_config)
-        else:
-            config_str = str(model_config)
-        lines.append(f"{indent}Model Config: {config_str}")
+        lines.append(f"{indent}Model Config: {_format_model_config(model_config)}")
 
     # 2.5 Guards
     if guards:
@@ -249,12 +263,23 @@ def _format_log(
                 name = g.get("name", str(g))
                 constraints = g.get("constraints")
                 if constraints:
-                    serialized_guards.append(f"{name}({constraints})")
+                    if isinstance(constraints, dict):
+                        constraints_clean = {k: v for k, v in constraints.items() if k != "log"}
+                        constraints_str = ", ".join(f"{k}={v}" for k, v in constraints_clean.items())
+                    else:
+                        constraints_str = str(constraints)
+                    serialized_guards.append(f"{name}({constraints_str})")
                 else:
                     serialized_guards.append(name)
             else:
                 if hasattr(g, "get_details"):
-                    serialized_guards.append(f"{g.__class__.__name__}({g.get_details()})")
+                    constraints = g.get_details()
+                    if isinstance(constraints, dict):
+                        constraints_clean = {k: v for k, v in constraints.items() if k != "log"}
+                        constraints_str = ", ".join(f"{k}={v}" for k, v in constraints_clean.items())
+                    else:
+                        constraints_str = str(constraints)
+                    serialized_guards.append(f"{g.__class__.__name__}({constraints_str})")
                 else:
                     serialized_guards.append(getattr(g, "__name__", str(g)))
         guards_str = ", ".join(serialized_guards)
@@ -270,21 +295,43 @@ def _format_log(
                 name = t.get("name", str(t))
                 t_guards = t.get("guards")
                 if t_guards:
-                    t_guards_str = ", ".join(
-                        f"{g['name']}({g['constraints']})" if g.get("constraints") else g['name']
-                        for g in t_guards
-                    )
+                    t_guards_list = []
+                    for g in t_guards:
+                        g_name = g.get("name")
+                        g_const = g.get("constraints")
+                        if g_const and isinstance(g_const, dict):
+                            g_const_clean = {k: v for k, v in g_const.items() if k != "log"}
+                            g_const_str = ", ".join(f"{k}={v}" for k, v in g_const_clean.items())
+                            t_guards_list.append(f"{g_name}({g_const_str})")
+                        elif g_const:
+                            t_guards_list.append(f"{g_name}({g_const})")
+                        else:
+                            t_guards_list.append(g_name)
+                    t_guards_str = ", ".join(t_guards_list)
                     serialized_tools.append(f"{name} [Guards: {t_guards_str}]")
                 else:
                     serialized_tools.append(name)
             else:
-                name = getattr(t, "__name__", str(t))
+                t_unwrapped = t
+                while hasattr(t_unwrapped, "__wrapped__"):
+                    t_unwrapped = t_unwrapped.__wrapped__
+                name = getattr(t_unwrapped, "__name__", str(t_unwrapped))
                 t_guards = getattr(t, "_dingir_guards", [])
                 if t_guards:
-                    t_guards_str = ", ".join(
-                        f"{g.__class__.__name__}({g.get_details()})" if hasattr(g, "get_details") else getattr(g, "__name__", str(g))
-                        for g in t_guards
-                    )
+                    t_guards_list = []
+                    for g in t_guards:
+                        g_name = g.__class__.__name__
+                        if hasattr(g, "get_details"):
+                            g_const = g.get_details()
+                            if isinstance(g_const, dict):
+                                g_const_clean = {k: v for k, v in g_const.items() if k != "log"}
+                                g_const_str = ", ".join(f"{k}={v}" for k, v in g_const_clean.items())
+                                t_guards_list.append(f"{g_name}({g_const_str})")
+                            else:
+                                t_guards_list.append(f"{g_name}({g_const})")
+                        else:
+                            t_guards_list.append(getattr(g, "__name__", str(g)))
+                    t_guards_str = ", ".join(t_guards_list)
                     serialized_tools.append(f"{name} [Guards: {t_guards_str}]")
                 else:
                     serialized_tools.append(name)
@@ -293,8 +340,8 @@ def _format_log(
 
     # 4. System Prompt
     if system_prompt:
-        indented_prompt = system_prompt.replace("\n", "\n" + indent + "  ")
-        lines.append(f"{indent}System Prompt:\n{indent}  {indented_prompt}")
+        lines.append(f"{indent}System Prompt:")
+        lines.append(_indent_text(system_prompt, indent_level + 1))
 
     # 5. Entries
     lines.append(f"{indent}Entries ({len(entries)}):")
@@ -317,8 +364,20 @@ def _format_log(
 
             meta = f"  {e_metadata}" if e_metadata else ""
 
-            if e_type == "subagent_log" and isinstance(e_content, dict):
-                lines.append(f"{indent}  [{e_timestamp}] subagent_log for {e_name or 'subagent'}:")
+            if e_type == "config":
+                lines.append(f"{indent}  [{e_timestamp}] [CONFIG]:")
+                if isinstance(e_content, dict):
+                    m_id = e_content.get("model_id")
+                    config_val = e_content.get("config")
+                    if m_id:
+                        lines.append(f"{indent}    Model ID: {m_id}")
+                    if config_val is not None:
+                        lines.append(f"{indent}    Configuration: {_format_model_config(config_val)}")
+                else:
+                    lines.append(f"{indent}    {e_content}")
+
+            elif e_type == "subagent_log" and isinstance(e_content, dict):
+                lines.append(f"{indent}  [{e_timestamp}] [SUBAGENT LOG] for {e_name or 'subagent'}:")
                 sub_system = e_content.get("system_prompt")
                 sub_tools = e_content.get("tools", [])
                 sub_entries = e_content.get("entries", [])
@@ -337,6 +396,7 @@ def _format_log(
                     indent_level=indent_level + 4,
                 )
                 lines.append(sub_str)
+
             elif e_type == "guard_trigger" and isinstance(e_content, dict):
                 g_type = e_content.get("guard_type", "Guard")
                 err_msg = e_content.get("error", "")
@@ -344,17 +404,117 @@ def _format_log(
                 constraints = e_content.get("constraints", {})
                 tool_msg = f" on tool '{e_content['applied_to_tool']}'" if "applied_to_tool" in e_content else ""
                 agent_msg = f" on agent '{e_content['applied_to_agent']}'" if "applied_to_agent" in e_content else ""
+                tool_args = e_content.get("tool_arguments")
 
                 status_upper = status.upper()
                 lines.append(
-                    f"{indent}  [{e_timestamp}] guard_trigger: Guard '{g_type}'{tool_msg}{agent_msg} {status_upper}! "
-                    f"Details: {err_msg} | Constraints: {constraints}{meta}"
+                    f"{indent}  [{e_timestamp}] [GUARD TRIGGER]: Guard '{g_type}'{tool_msg}{agent_msg} {status_upper}!"
                 )
+                if err_msg:
+                    lines.append(f"{indent}    Error: {err_msg}")
+                if constraints:
+                    if isinstance(constraints, dict):
+                        constraints_clean = {k: v for k, v in constraints.items() if k != "log"}
+                        constraints_str = ", ".join(f"{k}={v}" for k, v in constraints_clean.items())
+                    else:
+                        constraints_str = str(constraints)
+                    if constraints_str:
+                        lines.append(f"{indent}    Constraints: {constraints_str}")
+                if tool_args:
+                    lines.append(f"{indent}    Arguments: {tool_args}")
+
+            elif e_type == "message" and isinstance(e_content, dict):
+                role = e_content.get("role", "")
+                content = e_content.get("content", "")
+                reasoning = e_content.get("reasoning_content") or e_content.get("reasoning") or ""
+                tool_calls = e_content.get("tool_calls")
+
+                if role == "user":
+                    if content:
+                        lines.append(f"{indent}  [{e_timestamp}] [USER MESSAGE]:")
+                        lines.append(_indent_text(content, indent_level + 2))
+                elif role == "assistant":
+                    if reasoning:
+                        lines.append(f"{indent}  [{e_timestamp}] [REASONING]:")
+                        lines.append(_indent_text(reasoning, indent_level + 2))
+                    if content:
+                        lines.append(f"{indent}  [{e_timestamp}] [ASSISTANT MESSAGE]:")
+                        lines.append(_indent_text(content, indent_level + 2))
+                    if tool_calls:
+                        lines.append(f"{indent}  [{e_timestamp}] [ASSISTANT TOOL CALLS]:")
+                        import json
+                        for tc in tool_calls:
+                            tc_name = tc.get("name")
+                            tc_args = tc.get("arguments")
+                            if isinstance(tc_args, dict):
+                                tc_args_str = ", ".join(f"{k}={v!r}" for k, v in tc_args.items())
+                            elif isinstance(tc_args, str):
+                                try:
+                                    resolved_args = json.loads(tc_args)
+                                    if isinstance(resolved_args, dict):
+                                        tc_args_str = ", ".join(f"{k}={v!r}" for k, v in resolved_args.items())
+                                    else:
+                                        tc_args_str = str(resolved_args)
+                                except Exception:
+                                    tc_args_str = tc_args
+                            else:
+                                tc_args_str = str(tc_args)
+                            lines.append(f"{indent}    - {tc_name}({tc_args_str})")
+                else:
+                    role_upper = role.upper()
+                    if content:
+                        lines.append(f"{indent}  [{e_timestamp}] [{role_upper} MESSAGE]:")
+                        lines.append(_indent_text(content, indent_level + 2))
+
+            elif e_type == "tool_call" and isinstance(e_content, dict):
+                name = e_content.get("name")
+                args = e_content.get("arguments")
+                import json
+                if isinstance(args, dict):
+                    args_str = ", ".join(f"{k}={v!r}" for k, v in args.items())
+                elif isinstance(args, str):
+                    try:
+                        resolved_args = json.loads(args)
+                        if isinstance(resolved_args, dict):
+                            args_str = ", ".join(f"{k}={v!r}" for k, v in resolved_args.items())
+                        else:
+                            args_str = str(resolved_args)
+                    except Exception:
+                        args_str = args
+                else:
+                    args_str = str(args)
+                lines.append(f"{indent}  [{e_timestamp}] [TOOL CALL]: {name}({args_str})")
+
+            elif e_type == "tool_result" and isinstance(e_content, dict):
+                name = e_content.get("name")
+                output = e_content.get("output", "")
+                call_id = e_content.get("tool_call_id", "call_idx")
+
+                lines.append(f"{indent}  [{e_timestamp}] [TOOL RESULT] {name} (ID: {call_id}):")
+                output_str = str(output)
+                if output_str:
+                    lines.append(_indent_text(output_str, indent_level + 2))
+
+            elif e_type in ("exception", "error") and isinstance(e_content, dict):
+                exc_type = e_content.get("exception_type", "Exception")
+                message = e_content.get("message", "")
+                traceback_str = e_content.get("traceback", "")
+                tool_name = e_content.get("tool_name")
+                tool_msg = f" during execution of tool '{tool_name}'" if tool_name else ""
+
+                lines.append(
+                    f"{indent}  [{e_timestamp}] [EXCEPTION]: {exc_type}{tool_msg}: {message}"
+                )
+                if traceback_str:
+                    lines.append(f"{indent}    Traceback:")
+                    lines.append(_indent_text(traceback_str, indent_level + 3))
+
+            elif e_type in ("exception", "error"):
+                lines.append(f"{indent}  [{e_timestamp}] [{e_type.upper()}]: {e_content}")
+
             else:
                 content_str = str(e_content)
-                if "\n" in content_str:
-                    content_str = content_str.replace("\n", "\n" + indent + "    ")
                 lines.append(
-                    f"{indent}  [{e_timestamp}] {e_type}: {content_str}{meta}"
+                    f"{indent}  [{e_timestamp}] [{e_type.upper()}]: {content_str}{meta}"
                 )
     return "\n".join(lines)
