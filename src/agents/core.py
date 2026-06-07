@@ -177,8 +177,8 @@ class Agent:
                 result = str(tool_func(resolved_args))
 
             return result
-        except GuardError:
-            raise
+        except GuardError as e:
+            return f"GUARD ERROR: {str(e)}"
         except Exception as e:
             return f"EXECUTION FAULT: {str(e)}"
         finally:
@@ -322,29 +322,9 @@ class Agent:
                         {"name": tc["name"], "arguments": tc["arguments"]},
                         agent_name=self.__name__,
                     )
-                    try:
-                        output = self._execute_tool_sync(
-                            tc["name"], tc["arguments"]
-                        )
-                    except GuardError as e:
-                        err_msg = f"GUARD ERROR: {str(e)}"
-                        self.memory.add(
-                            role="tool",
-                            content=err_msg,
-                            tool_call_id=tc.get("id", "call_idx"),
-                            name=tc["name"],
-                        )
-                        self.log.record(
-                            "tool_result",
-                            {
-                                "name": tc["name"],
-                                "tool_call_id": tc.get("id", "call_idx"),
-                                "output": err_msg,
-                            },
-                            agent_name=self.__name__,
-                        )
-                        raise
-
+                    output = self._execute_tool_sync(
+                        tc["name"], tc["arguments"]
+                    )
                     self.memory.add(
                         role="tool",
                         content=output,
