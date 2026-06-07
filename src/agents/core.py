@@ -2,8 +2,8 @@ import json
 from typing import Any, Callable, Dict, List, Optional
 
 from dingir.agents.guards import GuardError
-from dingir.log import Log
-from dingir.memory import Memory
+from dingir.agents.log import Log
+from dingir.agents.memory import Memory
 
 
 class Agent:
@@ -84,22 +84,23 @@ class Agent:
             # Enrich system prompt with a comprehensive instruction framework
             tools_instruction_block = (
                 "\n\n"
-                "You are a model that assists in resolving "
-                "the user instruction. To do so, you can do function calling "
-                "with the following functions:\n\n"
+                "You can do function calling with the following functions:\n\n"
                 f"{tool_descriptions_json}\n\n"
                 "TOOL EXECUTION GUIDELINES:\n"
-                "1. Analyze the user query and select the most appropriate "
-                "tool from the toolset above. If no tool is needed or "
-                "suitable, respond directly using your general knowledge.\n"
-                "2. When executing a tool call, ensure you strictly adhere "
-                "to the types, descriptions, and required constraints "
-                "defined in the parameter schema.\n"
-                "3. All arguments must be passed as a valid JSON object "
-                "matching the defined parameter structure.\n"
-                "4. Always execute the tool through the provider's native "
-                "tool-calling interface. Do not simulate or mock tool "
-                "responses in your text content."
+                "1.Analyze the user query and select the most appropriate tool. "
+                "If no tool is needed, respond directly using your general knowledge.\n"
+                "2.When calling a tool, strictly adhere to the types and constraints "
+                "defined in the schema.\n"
+                "3.You MUST trigger a tool call by formatting your response exactly "
+                "like this:\n"
+                "```json\n"
+                "{{\n"
+                "  \"name\": \"tool_name\",\n"
+                "  \"arguments\": {{ \"param\": \"value\" }}\n"
+                "}}\n"
+                "```\n"
+                "Do not add any other text before or after this JSON block when\n"
+                "calling a tool."
             )
             self.system = f"{system}{tools_instruction_block}"
         else:
@@ -113,7 +114,15 @@ class Agent:
         self.__doc__ = self.description
 
         # Agent-owned log and memory
-        self.log = Log()
+        self.log = Log(
+            system_prompt=self.system,
+            tools=self.tools,
+            agent_name=self.__name__,
+            model_id=self.model.id,
+            model_config=self.model.config.__dict__
+            if hasattr(self.model.config, "__dict__")
+            else str(self.model.config),
+        )
         self.memory = Memory(system=self.system)
 
         # Record initial configuration
@@ -134,6 +143,13 @@ class Agent:
         # The caller (parent agent) is responsible for merging self.log afterwards.
         self.memory = Memory(system=self.system)
         self.log.clear()
+        self.log.system_prompt = self.system
+        self.log.tools = self.tools
+        self.log.agent_name = self.__name__
+        self.log.model_id = self.model.id
+        self.log.model_config = self.model.config.__dict__ \
+            if hasattr(self.model.config, "__dict__") \
+            else str(self.model.config)
 
         # Re-record config for this fresh run
         self.log.record(
