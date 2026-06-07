@@ -30,7 +30,9 @@ class PathGuard(Guard):
         log: bool = True,
     ):
         super().__init__(log=log)
-        self.allowed_dirs = [os.path.abspath(d) for d in allowed_dirs]
+        self.allowed_dirs = [
+            os.path.abspath(os.path.expanduser(d)) for d in allowed_dirs
+        ]
         self.param_name = param_name
 
     def check_tool_args(
@@ -39,7 +41,7 @@ class PathGuard(Guard):
         """Reject paths that fall outside the allowed directories."""
         filepath = arguments.get(self.param_name)
         if filepath is not None:
-            abs_path = os.path.abspath(filepath)
+            abs_path = os.path.abspath(os.path.expanduser(filepath))
             if not any(
                 abs_path.startswith(allowed) for allowed in self.allowed_dirs
             ):

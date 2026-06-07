@@ -1,19 +1,8 @@
 import os
 
 
-def _is_safe_path(path: str) -> bool:
-    """Checks whether a given path resolves inside the current working directory."""
-    abs_path = os.path.abspath(path)
-    cwd = os.getcwd()
-    return abs_path.startswith(cwd)
-
-
 def read_file(filepath: str) -> str:
-    """Reads and returns the full text contents of a file. The file must be inside the current working directory."""
-    if not _is_safe_path(filepath):
-        return (
-            "Access Denied: Path is outside the permitted workspace directory."
-        )
+    """Reads and returns the full text contents of a file."""
     try:
         with open(filepath, "r", encoding="utf-8") as f:
             return f.read()
@@ -22,11 +11,7 @@ def read_file(filepath: str) -> str:
 
 
 def write_file(filepath: str, content: str) -> str:
-    """Writes text content to a file, creating parent directories if needed. The file must be inside the current working directory. Overwrites any existing content."""
-    if not _is_safe_path(filepath):
-        return (
-            "Access Denied: Path is outside the permitted workspace directory."
-        )
+    """Writes text content to a file, creating parent directories if needed. Overwrites any existing content."""
     try:
         abs_path = os.path.abspath(filepath)
         os.makedirs(os.path.dirname(abs_path), exist_ok=True)
@@ -40,11 +25,7 @@ def write_file(filepath: str, content: str) -> str:
 def replace_lines(
     filepath: str, start_line: int, end_line: int, new_content: str
 ) -> str:
-    """Replaces a contiguous range of lines in a file with new content. Lines are 1-indexed and the range is inclusive (both start_line and end_line are replaced). To insert lines without removing any, set start_line and end_line to the same value and include the original line along with the new lines in new_content. The file must be inside the current working directory."""
-    if not _is_safe_path(filepath):
-        return (
-            "Access Denied: Path is outside the permitted workspace directory."
-        )
+    """Replaces a contiguous range of lines in a file with new content. Lines are 1-indexed and the range is inclusive (both start_line and end_line are replaced). To insert lines without removing any, set start_line and end_line to the same value and include the original line along with the new lines in new_content."""
     try:
         abs_path = os.path.abspath(filepath)
         with open(abs_path, "r", encoding="utf-8") as f:

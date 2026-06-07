@@ -239,9 +239,31 @@ def test_openai_compatible_driver():
                 api_key="override-key",
                 base_url="https://override.com/v1",
             )
-            mock_client_cls.assert_called_once_with(
+            model_cls.assert_called_once_with(
                 api_key="override-key",
                 base_url="https://override.com/v1",
                 max_retries=3,
                 timeout=60.0,
             )
+
+
+def test_agent_naming():
+    from dingir.agents.core import Agent
+
+    model = DummyLLM("dummy-model")
+
+    def my_tool():
+        pass
+
+    def last_tool():
+        pass
+
+    agent = Agent(
+        name="my-custom-agent",
+        model=model,
+        system="Hello system",
+        tools=[my_tool, last_tool],
+    )
+
+    assert agent.__name__ == "my-custom-agent"
+

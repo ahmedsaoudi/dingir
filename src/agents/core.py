@@ -13,6 +13,7 @@ class Agent:
         self,
         model: Any,
         system: str,
+        name: Optional[str] = None,
         description: Optional[str] = None,
         tools: Optional[List[Any]] = None,
         guards: Optional[List[Any]] = None,
@@ -29,7 +30,7 @@ class Agent:
                 # Extract schema information
                 if hasattr(t, "_dingir_schema"):
                     func = t._dingir_schema.get("function", {})
-                    name = func.get("name", getattr(t, "__name__", "unknown"))
+                    tool_name = func.get("name", getattr(t, "__name__", "unknown"))
                     desc = func.get(
                         "description",
                         getattr(t, "__doc__", "No description provided."),
@@ -39,7 +40,7 @@ class Agent:
                     )
                     required = func.get("parameters", {}).get("required", [])
                 else:
-                    name = getattr(t, "__name__", "unknown")
+                    tool_name = getattr(t, "__name__", "unknown")
                     desc = getattr(t, "__doc__", "No description provided.")
                     properties = {}
                     required = []
@@ -70,7 +71,7 @@ class Agent:
 
                 tool_descriptions.append(
                     {
-                        "name": name,
+                        "name": tool_name,
                         "description": clean_desc,
                         "parameters": {
                             "properties": properties,
@@ -106,11 +107,14 @@ class Agent:
         else:
             self.system = system
 
-        self.__name__ = (
-            self.__class__.__name__
-            + "_"
-            + model.id.replace("-", "_").replace(".", "_")
-        )
+        if name:
+            self.__name__ = name
+        else:
+            self.__name__ = (
+                self.__class__.__name__
+                + "_"
+                + model.id.replace("-", "_").replace(".", "_")
+            )
         self.__doc__ = self.description
 
         # Agent-owned log and memory
