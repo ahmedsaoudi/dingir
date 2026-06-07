@@ -91,14 +91,7 @@ class Agent:
                 "If no tool is needed, respond directly using your general knowledge.\n"
                 "2.When calling a tool, strictly adhere to the types and constraints "
                 "defined in the schema.\n"
-                "3.You MUST trigger a tool call by formatting your response exactly "
-                "like this:\n"
-                "```json\n"
-                "{{\n"
-                "  \"name\": \"tool_name\",\n"
-                "  \"arguments\": {{ \"param\": \"value\" }}\n"
-                "}}\n"
-                "```\n"
+                "3.You MUST trigger a tool call by formatting it in json. "
                 "Do not add any other text before or after this JSON block when\n"
                 "calling a tool."
             )
@@ -183,16 +176,14 @@ class Agent:
             else:
                 result = str(tool_func(resolved_args))
 
-            # If the tool is a sub-agent, merge its log into ours
-            if isinstance(tool_func, Agent):
-                self.log.merge(tool_func.log)
-
             return result
         except GuardError:
             raise
         except Exception as e:
             return f"EXECUTION FAULT: {str(e)}"
         finally:
+            if isinstance(tool_func, Agent):
+                self.log.merge(tool_func.log)
             _active_agent.reset(token)
 
     def _get_serialized_tools(self) -> List[Dict[str, Any]]:
@@ -331,9 +322,29 @@ class Agent:
                         {"name": tc["name"], "arguments": tc["arguments"]},
                         agent_name=self.__name__,
                     )
-                    output = self._execute_tool_sync(
-                        tc["name"], tc["arguments"]
-                    )
+                    try:
+                        output = self._execute_tool_sync(
+                            tc["name"], tc["arguments"]
+                        )
+                    except GuardError as e:
+                        err_msg = f"GUARD ERROR: {str(e)}"
+                        self.memory.add(
+                            role="tool",
+                            content=err_msg,
+                            tool_call_id=tc.get("id", "call_idx"),
+                            name=tc["name"],
+                        )
+                        self.log.record(
+                            "tool_result",
+                            {
+                                "name": tc["name"],
+                                "tool_call_id": tc.get("id", "call_idx"),
+                                "output": err_msg,
+                            },
+                            agent_name=self.__name__,
+                        )
+                        raise
+
                     self.memory.add(
                         role="tool",
                         content=output,

@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 from dingir.agents.guards import Guard, GuardError
 
@@ -21,6 +21,14 @@ class IterationGuard(Guard):
         super().__init__(log=log)
         self.max_iterations = max_iterations
         self.iterations = 0
+
+    def check_tool_args(
+        self, tool_name: str, arguments: Dict[str, Any]
+    ) -> None:
+        """Delegate validation to check_step using the active agent if available."""
+        from dingir.agents.guards import _active_agent
+        agent = _active_agent.get()
+        self.check_step(agent)
 
     def check_step(self, agent: Optional[Any] = None) -> None:
         """Increment the iteration count and raise if the limit is exceeded."""
