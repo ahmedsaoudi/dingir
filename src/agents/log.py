@@ -257,11 +257,14 @@ def _format_log(
             elif e_type == "guard_trigger" and isinstance(e_content, dict):
                 g_type = e_content.get("guard_type", "Guard")
                 err_msg = e_content.get("error", "")
+                status = e_content.get("status", "failed")
                 constraints = e_content.get("constraints", {})
                 tool_msg = f" on tool '{e_content['applied_to_tool']}'" if "applied_to_tool" in e_content else ""
+                
+                status_upper = status.upper()
                 lines.append(
-                    f"{indent}  [{e_timestamp}] guard_trigger: Guard '{g_type}'{tool_msg} FAILED! "
-                    f"Error: {err_msg} | Constraints: {constraints}{meta}"
+                    f"{indent}  [{e_timestamp}] guard_trigger: Guard '{g_type}'{tool_msg} {status_upper}! "
+                    f"Details: {err_msg} | Constraints: {constraints}{meta}"
                 )
             else:
                 content_str = str(e_content)

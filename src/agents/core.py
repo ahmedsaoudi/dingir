@@ -279,6 +279,12 @@ class Agent:
                 agent_name=self.__name__,
             )
         while True:
+            # Execute step callbacks at the start of the iteration
+            if on_step_callback:
+                cbs = on_step_callback if isinstance(on_step_callback, (list, tuple)) else [on_step_callback]
+                for cb in cbs:
+                    cb(self)
+
             serializable_messages = self.memory.to_messages()
 
             tool_schemas = self._get_serialized_tools()

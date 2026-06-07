@@ -44,11 +44,28 @@ class SecureAction(Guard):
                         handler = get_approval_handler()
                         prompt = f"Authorization requested for tool execution: '{tc.get('name')}'"
                         payload = tc.get("arguments")
-                        if not handler(prompt, payload=payload):
+                        approved = handler(prompt, payload=payload)
+                        if approved:
+                            log_guard_trigger(
+                                self,
+                                f"Authorization approved for tool execution: '{tc.get('name')}'",
+                                agent=agent,
+                                tool_name=tc.get("name"),
+                                arguments=payload,
+                                status="approved",
+                            )
+                        else:
                             err = GuardError(
                                 "EXECUTION BLOCKED: Operation rejected by safety supervisor operator."
                             )
-                            log_guard_trigger(self, err, agent=agent, tool_name=tc.get("name"), arguments=payload)
+                            log_guard_trigger(
+                                self,
+                                str(err),
+                                agent=agent,
+                                tool_name=tc.get("name"),
+                                arguments=payload,
+                                status="rejected",
+                            )
                             raise err
             return None
 
@@ -84,7 +101,13 @@ class SecureAction(Guard):
                     value, annotation
                 ):
                     err_msg = f"SECURITY FAULT: Param '{name}' must match type {annotation.__name__}."
-                    log_guard_trigger(self, GuardError(err_msg), tool_name=func.__name__, arguments=dict(bound_args.arguments))
+                    log_guard_trigger(
+                        self,
+                        err_msg,
+                        tool_name=func.__name__,
+                        arguments=dict(bound_args.arguments),
+                        status="failed",
+                    )
                     return err_msg
 
             # 2. Human-In-The-Loop Approval Pass
@@ -92,9 +115,24 @@ class SecureAction(Guard):
                 handler = get_approval_handler()
                 prompt = f"Authorization requested for tool operation: '{func.__name__}'"
                 payload = dict(bound_args.arguments)
-                if not handler(prompt, payload=payload):
+                approved = handler(prompt, payload=payload)
+                if approved:
+                    log_guard_trigger(
+                        self,
+                        f"Authorization approved for tool operation: '{func.__name__}'",
+                        tool_name=func.__name__,
+                        arguments=payload,
+                        status="approved",
+                    )
+                else:
                     err_msg = "EXECUTION BLOCKED: Operation rejected by safety supervisor operator."
-                    log_guard_trigger(self, GuardError(err_msg), tool_name=func.__name__, arguments=payload)
+                    log_guard_trigger(
+                        self,
+                        err_msg,
+                        tool_name=func.__name__,
+                        arguments=payload,
+                        status="rejected",
+                    )
                     return err_msg
 
             return func(*args, **purged_kwargs)

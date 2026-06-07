@@ -50,10 +50,11 @@ def _find_active_agent() -> Optional[Any]:
 
 def log_guard_trigger(
     guard: Any,
-    error: Exception,
+    message: str,
     agent: Optional[Any] = None,
     tool_name: Optional[str] = None,
     arguments: Optional[Dict[str, Any]] = None,
+    status: str = "failed",
 ) -> None:
     if not getattr(guard, "log", True):
         return
@@ -70,7 +71,8 @@ def log_guard_trigger(
         context = {
             "guard_type": guard_type,
             "constraints": constraints,
-            "error": str(error),
+            "error": message,
+            "status": status,
         }
         if tool_name:
             context["applied_to_tool"] = tool_name
@@ -146,9 +148,10 @@ def guard_tool(
                 if log:
                     log_guard_trigger(
                         guard,
-                        e,
+                        str(e),
                         tool_name=tool.__name__,
                         arguments=bound.arguments,
+                        status="failed",
                     )
                 raise
 

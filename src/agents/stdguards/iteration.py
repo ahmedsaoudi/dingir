@@ -18,12 +18,27 @@ class IterationGuard(Guard):
 
     def check(self, agent: Optional[Any] = None) -> None:
         """Increment the iteration count and raise MaxIterationsReached if the limit is exceeded."""
-        self.iterations += 1
-        if self.iterations > self.max_iterations:
+        if agent is not None and hasattr(agent, "memory") and agent.memory.last:
+            turns = sum(1 for m in agent.memory.messages if m.role == "assistant")
+            self.iterations = turns
+            
+            # Determine if we are at the start of an iteration (before model call)
+            # or in the middle of an iteration (after assistant responds, before tools run)
+            if agent.memory.last.role == "assistant":
+                # Middle of iteration: assistant has responded. Limit is exceeded if turns > max_iterations.
+                limit_exceeded = turns > self.max_iterations
+            else:
+                # Start of iteration: checking completed turns. Limit is exceeded if turns >= max_iterations.
+                limit_exceeded = turns >= self.max_iterations
+        else:
+            self.iterations += 1
+            limit_exceeded = self.iterations > self.max_iterations
+
+        if limit_exceeded:
             err = MaxIterationsReached(
                 f"Agent stopped: maximum iteration limit of {self.max_iterations} reached."
             )
-            log_guard_trigger(self, err, agent=agent)
+            log_guard_trigger(self, str(err), agent=agent, status="failed")
             raise err
 
     def __call__(self, agent: Any = None) -> None:
