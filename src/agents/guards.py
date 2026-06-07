@@ -161,6 +161,7 @@ class Guard:
                 raise
             return func(*args, **kwargs)
 
+        wrapper._dingir_guards = getattr(func, "_dingir_guards", []) + [self]
         return wrapper
 
     # --------------------------------------------------------------------- #
@@ -342,4 +343,5 @@ def guard_tool(
 
         return tool(*args, **kwargs)
 
+    wrapper._dingir_guards = getattr(tool, "_dingir_guards", []) + list(guards)
     return wrapper

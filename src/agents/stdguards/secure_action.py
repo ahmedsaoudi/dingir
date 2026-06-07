@@ -102,4 +102,5 @@ class SecureAction(Guard):
 
             return func(*args, **purged_kwargs)
 
+        wrapper._dingir_guards = getattr(func, "_dingir_guards", []) + [self]
         return wrapper

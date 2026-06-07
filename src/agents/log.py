@@ -6,6 +6,37 @@ from typing import Any, Dict, Iterator, List, Optional
 ENTRY_TYPES = {"config", "message", "tool_call", "tool_result", "subagent_log", "guard_trigger"}
 
 
+def _serialize_guard(g: Any) -> Dict[str, Any]:
+    """Recursively serialise a guard or callback object for metadata logging."""
+    if hasattr(g, "get_details"):
+        constraints = g.get_details()
+        serialized_constraints = {}
+        for k, v in constraints.items():
+            serialized_constraints[k] = _serialize_guard_value(v)
+        return {
+            "name": g.__class__.__name__,
+            "constraints": serialized_constraints,
+        }
+    else:
+        return {
+            "name": getattr(g, "__name__", g.__class__.__name__),
+        }
+
+
+def _serialize_guard_value(v: Any) -> Any:
+    if isinstance(v, (str, int, float, bool, type(None))):
+        return v
+    if isinstance(v, (list, tuple, set)):
+        return [_serialize_guard_value(x) for x in v]
+    if isinstance(v, dict):
+        return {str(k): _serialize_guard_value(x) for k, x in v.items()}
+    if hasattr(v, "get_details"):
+        return _serialize_guard(v)
+    if hasattr(v, "__name__"):
+        return v.__name__
+    return str(v)
+
+
 @dataclass
 class LogEntry:
     """A single structured entry in an agent's execution log."""
@@ -42,6 +73,7 @@ class Log:
         agent_name: Optional[str] = None,
         model_id: Optional[str] = None,
         model_config: Optional[Any] = None,
+        guards: Optional[List[Any]] = None,
     ) -> None:
         self._entries: List[LogEntry] = []
         self.system_prompt = system_prompt
@@ -49,6 +81,7 @@ class Log:
         self.agent_name = agent_name
         self.model_id = model_id
         self.model_config = model_config
+        self.guards = guards or []
 
     # ------------------------------------------------------------------
     # Core recording
@@ -104,29 +137,37 @@ class Log:
         """Serialise the full log to a plain dict."""
         serialized_tools = []
         for t in self.tools:
+            s_tool = None
             if isinstance(t, str):
-                serialized_tools.append({"name": t})
+                s_tool = {"name": t}
             elif isinstance(t, dict):
-                serialized_tools.append(t)
+                s_tool = dict(t)
             elif hasattr(t, "_dingir_schema"):
                 func = t._dingir_schema.get("function", {})
-                serialized_tools.append({
+                s_tool = {
                     "name": func.get("name", getattr(t, "__name__", "unknown")),
                     "description": func.get("description", getattr(t, "__doc__", "No description provided.")),
                     "parameters": func.get("parameters", {}),
-                })
+                }
             elif hasattr(t, "__name__"):
-                serialized_tools.append({
+                s_tool = {
                     "name": t.__name__,
                     "description": getattr(t, "__doc__", "") or "No description provided.",
-                })
+                }
             elif hasattr(t, "name"):
-                serialized_tools.append({
+                s_tool = {
                     "name": t.name,
                     "description": getattr(t, "description", "") or "No description provided.",
-                })
+                }
             else:
-                serialized_tools.append({"name": str(t)})
+                s_tool = {"name": str(t)}
+
+            tool_guards = getattr(t, "_dingir_guards", None)
+            if tool_guards:
+                s_tool["guards"] = [_serialize_guard(g) for g in tool_guards]
+            serialized_tools.append(s_tool)
+
+        serialized_agent_guards = [_serialize_guard(g) for g in self.guards]
 
         return {
             "agent_name": self.agent_name,
@@ -134,6 +175,7 @@ class Log:
             "model_config": self.model_config,
             "system_prompt": self.system_prompt,
             "tools": serialized_tools,
+            "guards": serialized_agent_guards,
             "entries": [entry.to_dict() for entry in self._entries],
         }
 
@@ -163,6 +205,7 @@ class Log:
             agent_name=self.agent_name,
             model_id=self.model_id,
             model_config=self.model_config,
+            guards=self.guards,
             indent_level=0,
         )
 
@@ -174,6 +217,7 @@ def _format_log(
     agent_name: Optional[str] = None,
     model_id: Optional[str] = None,
     model_config: Optional[Any] = None,
+    guards: Optional[List[Any]] = None,
     indent_level: int = 0,
 ) -> str:
     indent = "  " * indent_level
@@ -197,6 +241,25 @@ def _format_log(
             config_str = str(model_config)
         lines.append(f"{indent}Model Config: {config_str}")
 
+    # 2.5 Guards
+    if guards:
+        serialized_guards = []
+        for g in guards:
+            if isinstance(g, dict):
+                name = g.get("name", str(g))
+                constraints = g.get("constraints")
+                if constraints:
+                    serialized_guards.append(f"{name}({constraints})")
+                else:
+                    serialized_guards.append(name)
+            else:
+                if hasattr(g, "get_details"):
+                    serialized_guards.append(f"{g.__class__.__name__}({g.get_details()})")
+                else:
+                    serialized_guards.append(getattr(g, "__name__", str(g)))
+        guards_str = ", ".join(serialized_guards)
+        lines.append(f"{indent}Guards: {guards_str}")
+
     # 3. Tools
     if tools:
         serialized_tools = []
@@ -204,9 +267,27 @@ def _format_log(
             if isinstance(t, str):
                 serialized_tools.append(t)
             elif isinstance(t, dict):
-                serialized_tools.append(t.get("name", str(t)))
+                name = t.get("name", str(t))
+                t_guards = t.get("guards")
+                if t_guards:
+                    t_guards_str = ", ".join(
+                        f"{g['name']}({g['constraints']})" if g.get("constraints") else g['name']
+                        for g in t_guards
+                    )
+                    serialized_tools.append(f"{name} [Guards: {t_guards_str}]")
+                else:
+                    serialized_tools.append(name)
             else:
-                serialized_tools.append(getattr(t, "__name__", str(t)))
+                name = getattr(t, "__name__", str(t))
+                t_guards = getattr(t, "_dingir_guards", [])
+                if t_guards:
+                    t_guards_str = ", ".join(
+                        f"{g.__class__.__name__}({g.get_details()})" if hasattr(g, "get_details") else getattr(g, "__name__", str(g))
+                        for g in t_guards
+                    )
+                    serialized_tools.append(f"{name} [Guards: {t_guards_str}]")
+                else:
+                    serialized_tools.append(name)
         tools_str = ", ".join(serialized_tools)
         lines.append(f"{indent}Tools: {tools_str}")
 
@@ -244,6 +325,7 @@ def _format_log(
                 sub_agent = e_content.get("agent_name") or e_name
                 sub_model = e_content.get("model_id")
                 sub_config = e_content.get("model_config")
+                sub_guards = e_content.get("guards", [])
                 sub_str = _format_log(
                     system_prompt=sub_system,
                     tools=sub_tools,
@@ -251,6 +333,7 @@ def _format_log(
                     agent_name=sub_agent,
                     model_id=sub_model,
                     model_config=sub_config,
+                    guards=sub_guards,
                     indent_level=indent_level + 4,
                 )
                 lines.append(sub_str)

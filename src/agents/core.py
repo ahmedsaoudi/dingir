@@ -277,6 +277,12 @@ class Agent:
         message: Optional[str] = None,
         on_step_callback: Optional[Callable[["Agent"], None] | List[Callable[["Agent"], None]]] = None,
     ):
+        if on_step_callback:
+            cbs = on_step_callback if isinstance(on_step_callback, (list, tuple)) else [on_step_callback]
+            self.log.guards = list(cbs)
+        else:
+            self.log.guards = []
+
         if message:
             self.memory.add(role="user", content=message)
             self.log.record(
