@@ -38,11 +38,12 @@ def main():
     # Secure file access tool wrapped with HITL approval
     secure_read = guard_tool(read_file, SecureAction(require_approval=True))
 
-    # Subagent 1: Specialized in reading codebase
+    # Subagent 1: Specialized in reading codebase (guarded at the agent level)
     code_reader = Agent(
         model=model,
         system="You are a specialized code reader subagent. Inspect and return file contents.",
         tools=[secure_read],
+        guards=[PathGuard(allowed_dirs=["./sandbox"])]  # Protects the entire subagent and all tools it uses!
     )
     code_reader.__name__ = "code_reader"
     code_reader.description = "Inspects file contents. Accepts a filename."

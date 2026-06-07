@@ -1,4 +1,5 @@
 from dingir.agents.stdtools.fs import (
+    get_cwd,
     list_directory,
     read_file,
     replace_lines,
@@ -16,5 +17,6 @@ __all__ = [
     "write_file",
     "replace_lines",
     "list_directory",
+    "get_cwd",
 ]
 

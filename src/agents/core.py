@@ -15,10 +15,12 @@ class Agent:
         system: str,
         description: Optional[str] = None,
         tools: Optional[List[Any]] = None,
+        guards: Optional[List[Any]] = None,
     ):
         self.model = model
         self.description = description or system[:100]
         self.tools = tools or []
+        self.guards = guards or []
 
         # Build tool description list to append to system prompt
         if self.tools:
@@ -120,6 +122,7 @@ class Agent:
             model_config=self.model.config.__dict__
             if hasattr(self.model.config, "__dict__")
             else str(self.model.config),
+            guards=self.guards,
         )
         self.memory = Memory(system=self.system)
 
@@ -148,6 +151,7 @@ class Agent:
         self.log.model_config = self.model.config.__dict__ \
             if hasattr(self.model.config, "__dict__") \
             else str(self.model.config)
+        self.log.guards = self.guards
 
         # Re-record config for this fresh run
         self.log.record(
@@ -273,11 +277,15 @@ class Agent:
         message: Optional[str] = None,
         on_step_callback: Optional[Callable[["Agent"], None] | List[Callable[["Agent"], None]]] = None,
     ):
+        # Combine default guards and runtime callbacks
+        cbs = list(self.guards)
         if on_step_callback:
-            cbs = on_step_callback if isinstance(on_step_callback, (list, tuple)) else [on_step_callback]
-            self.log.guards = list(cbs)
-        else:
-            self.log.guards = []
+            if isinstance(on_step_callback, (list, tuple)):
+                cbs.extend(on_step_callback)
+            else:
+                cbs.append(on_step_callback)
+
+        self.log.guards = cbs
 
         if message:
             self.memory.add(role="user", content=message)
@@ -288,8 +296,7 @@ class Agent:
             )
         while True:
             # Execute step callbacks at the start of the iteration
-            if on_step_callback:
-                cbs = on_step_callback if isinstance(on_step_callback, (list, tuple)) else [on_step_callback]
+            if cbs:
                 for cb in cbs:
                     cb(self)
 
@@ -315,12 +322,9 @@ class Agent:
                     },
                     agent_name=self.__name__,
                 )
-                if on_step_callback:
-                    if isinstance(on_step_callback, (list, tuple)):
-                        for cb in on_step_callback:
-                            cb(self)
-                    else:
-                        on_step_callback(self)
+                if cbs:
+                    for cb in cbs:
+                        cb(self)
                 for tc in result["tool_calls"]:
                     self.log.record(
                         "tool_call",
@@ -353,10 +357,7 @@ class Agent:
                 {"role": "assistant", "content": result["content"]},
                 agent_name=self.__name__,
             )
-            if on_step_callback:
-                if isinstance(on_step_callback, (list, tuple)):
-                    for cb in on_step_callback:
-                        cb(self)
-                else:
-                    on_step_callback(self)
+            if cbs:
+                for cb in cbs:
+                    cb(self)
             break

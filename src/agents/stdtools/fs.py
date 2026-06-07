@@ -86,11 +86,7 @@ def replace_lines(
 
 
 def list_directory(dirpath: str = ".") -> str:
-    """Lists all files and subdirectories inside the given directory path. The directory must be inside the current working directory."""
-    if not _is_safe_path(dirpath):
-        return (
-            "Access Denied: Path is outside the permitted workspace directory."
-        )
+    """Lists all files and subdirectories inside the given directory path."""
     try:
         items = sorted(os.listdir(dirpath))
         if not items:
@@ -103,3 +99,11 @@ def list_directory(dirpath: str = ".") -> str:
         return "\n".join(lines)
     except Exception as e:
         return f"Error listing directory: {str(e)}"
+
+
+def get_cwd() -> str:
+    """Returns the absolute path of the current working directory where the agent operates."""
+    try:
+        return os.getcwd()
+    except Exception as e:
+        return f"Error retrieving current working directory: {str(e)}"
