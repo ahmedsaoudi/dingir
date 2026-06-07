@@ -20,6 +20,7 @@ class OpenAICompatible(BaseLLM):
         config: ModelConfig,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
+        native_tools: Optional[bool] = None,
     ):
         super().__init__(id, config)
 
@@ -44,6 +45,18 @@ class OpenAICompatible(BaseLLM):
 
         self.sync_client = OpenAIClient(**client_kwargs)
 
+        if native_tools is not None:
+            self.use_native_tools = native_tools
+        else:
+            # Sane auto-detection fallback for standard local setups
+            is_local = False
+            if resolved_base_url:
+                if any(x in resolved_base_url for x in ["127.0.0.1", "localhost", "0.0.0.0"]):
+                    is_local = True
+            if resolved_api_key in ["none", "local"]:
+                is_local = True
+            self.use_native_tools = not is_local
+
     def request(
         self,
         system: Optional[str],
@@ -54,23 +67,43 @@ class OpenAICompatible(BaseLLM):
         if system:
             formatted_messages.append({"role": "system", "content": system})
         for m in messages:
-            msg = {"role": m["role"], "content": m["content"]}
-            if m.get("tool_calls"):
-                msg["tool_calls"] = [
-                    {
-                        "id": tc.get("id"),
-                        "type": "function",
-                        "function": {
-                            "name": tc.get("name"),
-                            "arguments": tc.get("arguments"),
-                        },
-                    }
-                    for tc in m["tool_calls"]
-                ]
-            if m.get("tool_call_id"):
-                msg["tool_call_id"] = m["tool_call_id"]
-                msg["role"] = "tool"
-                msg["name"] = m.get("name")
+            role = m["role"]
+            content = m["content"] or ""
+
+            if not self.use_native_tools:
+                # Local API servers often do not render tool/function roles in chat templates.
+                # Format tool calls and results as standard assistant and user text messages.
+                if role == "assistant" and m.get("tool_calls"):
+                    calls_text = []
+                    for tc in m["tool_calls"]:
+                        calls_text.append(f"[Called tool '{tc.get('name')}' with arguments: {tc.get('arguments')}]")
+                    calls_summary = "\n".join(calls_text)
+                    content = f"{content}\n{calls_summary}" if content else calls_summary
+
+                if role == "tool":
+                    role = "user"
+                    content = f"[Tool Result for '{m.get('name')}']:\n{content}"
+
+                msg = {"role": role, "content": content}
+            else:
+                msg = {"role": role, "content": content}
+                if m.get("tool_calls"):
+                    msg["tool_calls"] = [
+                        {
+                            "id": tc.get("id"),
+                            "type": "function",
+                            "function": {
+                                "name": tc.get("name"),
+                                "arguments": tc.get("arguments"),
+                            },
+                        }
+                        for tc in m["tool_calls"]
+                    ]
+                if m.get("tool_call_id"):
+                    msg["tool_call_id"] = m["tool_call_id"]
+                    msg["role"] = "tool"
+                    msg["name"] = m.get("name")
+
             formatted_messages.append(msg)
 
         args = {

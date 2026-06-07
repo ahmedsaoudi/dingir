@@ -85,15 +85,20 @@ class Agent:
             tools_instruction_block = (
                 "\n\n"
                 "You can do function calling with the following functions:\n\n"
+
                 f"{tool_descriptions_json}\n\n"
                 "TOOL EXECUTION GUIDELINES:\n"
-                "1.Analyze the user query and select the most appropriate tool. "
-                "If no tool is needed, respond directly using your general knowledge.\n"
-                "2.When calling a tool, strictly adhere to the types and constraints "
-                "defined in the schema.\n"
-                "3.You MUST trigger a tool call by formatting it in json. "
-                "Do not add any other text before or after this JSON block when\n"
-                "calling a tool."
+                "1. Analyze the user query and select the most appropriate "
+                "tool from the toolset above. If no tool is needed or "
+                "suitable, respond directly using your general knowledge.\n"
+                "2. When executing a tool call, ensure you strictly adhere "
+                "to the types, descriptions, and required constraints "
+                "defined in the parameter schema.\n"
+                "3. All arguments must be passed as a valid JSON object "
+                "matching the defined parameter structure.\n"
+                "4. Always execute the tool through the provider's native "
+                "tool-calling interface. Do not simulate or mock tool "
+                "responses in your text content."
             )
             self.system = f"{system}{tools_instruction_block}"
         else:
