@@ -3,7 +3,7 @@ import inspect
 import json
 from typing import Any, Callable
 
-from dingir.agents.guards import Guard, GuardError, get_approval_handler
+from dingir.agents.guards import Guard, GuardError, get_approval_handler, log_guard_trigger
 
 
 class SecureAction(Guard):
@@ -20,7 +20,9 @@ class SecureAction(Guard):
         self,
         func_or_require_approval: Any = True,
         require_approval: bool = True,
+        log: bool = True,
     ):
+        super().__init__(log=log)
         if callable(func_or_require_approval):
             self.require_approval = require_approval
             self.wrapped = self._wrap(func_or_require_approval)
@@ -43,9 +45,11 @@ class SecureAction(Guard):
                         prompt = f"Authorization requested for tool execution: '{tc.get('name')}'"
                         payload = tc.get("arguments")
                         if not handler(prompt, payload=payload):
-                            raise GuardError(
+                            err = GuardError(
                                 "EXECUTION BLOCKED: Operation rejected by safety supervisor operator."
                             )
+                            log_guard_trigger(self, err, agent=agent, tool_name=tc.get("name"), arguments=payload)
+                            raise err
             return None
 
         # Case 2: Decorator with args, Python passes the function to wrap
@@ -79,7 +83,9 @@ class SecureAction(Guard):
                 if annotation != inspect.Parameter.empty and not isinstance(
                     value, annotation
                 ):
-                    return f"SECURITY FAULT: Param '{name}' must match type {annotation.__name__}."
+                    err_msg = f"SECURITY FAULT: Param '{name}' must match type {annotation.__name__}."
+                    log_guard_trigger(self, GuardError(err_msg), tool_name=func.__name__, arguments=dict(bound_args.arguments))
+                    return err_msg
 
             # 2. Human-In-The-Loop Approval Pass
             if self.require_approval:
@@ -87,7 +93,9 @@ class SecureAction(Guard):
                 prompt = f"Authorization requested for tool operation: '{func.__name__}'"
                 payload = dict(bound_args.arguments)
                 if not handler(prompt, payload=payload):
-                    return "EXECUTION BLOCKED: Operation rejected by safety supervisor operator."
+                    err_msg = "EXECUTION BLOCKED: Operation rejected by safety supervisor operator."
+                    log_guard_trigger(self, GuardError(err_msg), tool_name=func.__name__, arguments=payload)
+                    return err_msg
 
             return func(*args, **purged_kwargs)
 

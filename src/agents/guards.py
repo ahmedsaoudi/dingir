@@ -1,4 +1,4 @@
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Optional
 import functools
 import sys
 
@@ -17,10 +17,72 @@ class Guard:
     a `GuardError` (or a subclass of it) if the guard check fails.
     """
 
+    log: bool = True
+
+    def __init__(self, log: bool = True) -> None:
+        self.log = log
+
+    def get_details(self) -> Dict[str, Any]:
+        """Return a dictionary of the guard's configuration/constraints."""
+        details = {}
+        for k, v in self.__dict__.items():
+            if not k.startswith("_") and not callable(v) and k != "wrapped":
+                details[k] = v
+        return details
+
     def __call__(self, agent: Any = None) -> None:
         """Execute the guard check on the current agent state."""
         raise NotImplementedError(
             "Custom guards must implement __call__(self, agent)"
+        )
+
+
+def _find_active_agent() -> Optional[Any]:
+    import sys
+    frame = sys._getframe(1)
+    while frame:
+        self_obj = frame.f_locals.get("self")
+        if self_obj and self_obj.__class__.__name__ == "Agent":
+            return self_obj
+        frame = frame.f_back
+    return None
+
+
+def log_guard_trigger(
+    guard: Any,
+    error: Exception,
+    agent: Optional[Any] = None,
+    tool_name: Optional[str] = None,
+    arguments: Optional[Dict[str, Any]] = None,
+) -> None:
+    if not getattr(guard, "log", True):
+        return
+    if agent is None:
+        agent = _find_active_agent()
+    if agent is not None and hasattr(agent, "log") and agent.log is not None:
+        if isinstance(guard, Guard):
+            constraints = guard.get_details()
+            guard_type = guard.__class__.__name__
+        else:
+            constraints = {}
+            guard_type = getattr(guard, "__name__", str(guard))
+
+        context = {
+            "guard_type": guard_type,
+            "constraints": constraints,
+            "error": str(error),
+        }
+        if tool_name:
+            context["applied_to_tool"] = tool_name
+        if arguments:
+            context["tool_arguments"] = arguments
+        if hasattr(agent, "__name__"):
+            context["applied_to_agent"] = agent.__name__
+
+        agent.log.record(
+            entry_type="guard_trigger",
+            content=context,
+            agent_name=getattr(agent, "__name__", ""),
         )
 
 
@@ -59,7 +121,9 @@ def get_approval_handler() -> Callable[[str, Any], bool]:
 
 
 def guard_tool(
-    tool: Callable[..., Any], *guards: Callable[[Dict[str, Any]], None]
+    tool: Callable[..., Any],
+    *guards: Callable[[Dict[str, Any]], None],
+    log: bool = True,
 ) -> Callable[..., Any]:
     """Wraps a tool callable with a list of tool-level guards.
 
@@ -76,7 +140,17 @@ def guard_tool(
 
         # Execute guards in order
         for guard in guards:
-            guard(bound.arguments)
+            try:
+                guard(bound.arguments)
+            except GuardError as e:
+                if log:
+                    log_guard_trigger(
+                        guard,
+                        e,
+                        tool_name=tool.__name__,
+                        arguments=bound.arguments,
+                    )
+                raise
 
         return tool(*args, **kwargs)
 

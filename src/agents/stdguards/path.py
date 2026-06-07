@@ -2,9 +2,9 @@ import functools
 import inspect
 import json
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-from dingir.agents.guards import Guard, GuardError
+from dingir.agents.guards import Guard, GuardError, log_guard_trigger
 
 
 class PathGuard(Guard):
@@ -23,7 +23,9 @@ class PathGuard(Guard):
         self,
         allowed_dirs: List[str],
         param_name: str = "filepath",
+        log: bool = True,
     ):
+        super().__init__(log=log)
         self.allowed_dirs = [os.path.abspath(d) for d in allowed_dirs]
         self.param_name = param_name
         self.wrapped = None
@@ -34,7 +36,7 @@ class PathGuard(Guard):
             sig = inspect.signature(self.wrapped)
             bound = sig.bind(*args, **kwargs)
             bound.apply_defaults()
-            self._check_args(bound.arguments)
+            self._check_args(bound.arguments, tool_name=getattr(self.wrapped, "__name__", None))
             return self.wrapped(*args, **kwargs)
 
         # Case 2: Check if used as a step guard (called with Agent object)
@@ -49,7 +51,7 @@ class PathGuard(Guard):
                         except Exception:
                             pass
                     if isinstance(tc_args, dict):
-                        self._check_args(tc_args)
+                        self._check_args(tc_args, agent=agent, tool_name=tc.get("name"))
             return None
 
         # Case 3: Check if used within guard_tool (called with bound arguments dict)
@@ -63,13 +65,15 @@ class PathGuard(Guard):
         functools.update_wrapper(self, func)
         return self
 
-    def _check_args(self, args: Dict[str, Any]) -> None:
+    def _check_args(self, args: Dict[str, Any], agent: Optional[Any] = None, tool_name: Optional[str] = None) -> None:
         filepath = args.get(self.param_name)
         if filepath is not None:
             abs_path = os.path.abspath(filepath)
             if not any(
                 abs_path.startswith(allowed) for allowed in self.allowed_dirs
             ):
-                raise GuardError(
+                err = GuardError(
                     f"Access Denied: Path '{filepath}' is outside permitted directories: {self.allowed_dirs}"
                 )
+                log_guard_trigger(self, err, agent=agent, tool_name=tool_name, arguments=args)
+                raise err
