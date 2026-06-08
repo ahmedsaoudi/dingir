@@ -1,3 +1,4 @@
+import os
 from typing import Any, Dict, List, Optional
 
 from dingir.agents.llms.base import BaseLLM
@@ -10,10 +11,15 @@ class HuggingFaceLocal(BaseLLM):
     """
 
     def __init__(
-        self, id: str, config: ModelConfig, task: str = "text-generation"
+        self,
+        id: str,
+        config: ModelConfig,
+        task: str = "text-generation",
+        api_key: Optional[str] = None,
     ):
         super().__init__(id, config)
         self.task = task
+        self.api_key = api_key or os.environ.get("HF_TOKEN")
         self._pipeline = None
         self._tokenizer = None
         self._model = None
@@ -37,10 +43,15 @@ class HuggingFaceLocal(BaseLLM):
                 torch_dtype=torch.float16
                 if device == "cuda"
                 else torch.float32,
+                token=self.api_key,
             )
         elif self.task == "feature-extraction":
-            self._tokenizer = AutoTokenizer.from_pretrained(self.id)
-            self._model = AutoModel.from_pretrained(self.id).to(device)
+            self._tokenizer = AutoTokenizer.from_pretrained(
+                self.id, token=self.api_key
+            )
+            self._model = AutoModel.from_pretrained(
+                self.id, token=self.api_key
+            ).to(device)
 
     def request(
         self,

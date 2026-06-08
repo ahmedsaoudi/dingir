@@ -45,17 +45,7 @@ class OpenAICompatible(BaseLLM):
 
         self.sync_client = OpenAIClient(**client_kwargs)
 
-        if native_tools is not None:
-            self.use_native_tools = native_tools
-        else:
-            # Sane auto-detection fallback for standard local setups
-            is_local = False
-            if resolved_base_url:
-                if any(x in resolved_base_url for x in ["127.0.0.1", "localhost", "0.0.0.0"]):
-                    is_local = True
-            if resolved_api_key in ["none", "local"]:
-                is_local = True
-            self.use_native_tools = not is_local
+        self.use_native_tools = native_tools if native_tools is not None else True
 
     def request(
         self,
@@ -76,9 +66,15 @@ class OpenAICompatible(BaseLLM):
                 if role == "assistant" and m.get("tool_calls"):
                     calls_text = []
                     for tc in m["tool_calls"]:
-                        calls_text.append(f"[Called tool '{tc.get('name')}' with arguments: {tc.get('arguments')}]")
+                        calls_text.append(
+                            f"[Called tool '{tc.get('name')}' with arguments: {tc.get('arguments')}]"
+                        )
                     calls_summary = "\n".join(calls_text)
-                    content = f"{content}\n{calls_summary}" if content else calls_summary
+                    content = (
+                        f"{content}\n{calls_summary}"
+                        if content
+                        else calls_summary
+                    )
 
                 if role == "tool":
                     role = "user"
@@ -164,10 +160,20 @@ class OpenAICompatible(BaseLLM):
         # Fallback to parse tags <think>...</think> or <|think|>...</|think|> if no native reasoning_content is returned
         if not reasoning and content:
             import re
-            match = re.search(r'<(?:think|\|think\|)>(.*?)</(?:think|\|think\|)>', content, re.DOTALL)
+
+            match = re.search(
+                r"<(?:think|\|think\|)>(.*?)</(?:think|\|think\|)>",
+                content,
+                re.DOTALL,
+            )
             if match:
                 reasoning = match.group(1).strip()
-                content = re.sub(r'<(?:think|\|think\|)>.*?</(?:think|\|think\|)>\s*', '', content, flags=re.DOTALL).strip()
+                content = re.sub(
+                    r"<(?:think|\|think\|)>.*?</(?:think|\|think\|)>\s*",
+                    "",
+                    content,
+                    flags=re.DOTALL,
+                ).strip()
 
         return {
             "content": content,

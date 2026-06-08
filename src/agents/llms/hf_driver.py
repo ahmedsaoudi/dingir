@@ -12,11 +12,11 @@ class HuggingFace(BaseLLM):
     """
 
     def __init__(
-        self, id: str, config: ModelConfig, token: Optional[str] = None
+        self, id: str, config: ModelConfig, api_key: Optional[str] = None
     ):
         super().__init__(id, config)
         self.client = InferenceClient(
-            model=id, token=token or os.environ.get("HF_TOKEN")
+            model=id, token=api_key or os.environ.get("HF_TOKEN")
         )
 
     def request(
