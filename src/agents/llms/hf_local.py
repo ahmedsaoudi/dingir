@@ -1,3 +1,4 @@
+import json
 import os
 from typing import Any, Dict, List, Optional
 
@@ -109,7 +110,53 @@ class HuggingFaceLocal(BaseLLM):
 
         # Extract only the newly generated token content substring
         generated_text = outputs[0]["generated_text"][len(prompt) :]
-        return {"content": generated_text.strip(), "tool_calls": None}
+
+        # Use the tokenizer's native parser to extract tool calls, thinking,
+        # and content. This handles model-specific formats automatically
+        # (Hermes, Qwen, Mistral, Llama, etc.).
+        tool_calls = None
+        cleaned_text = generated_text
+        try:
+            parsed = self._pipeline.tokenizer.parse_response(generated_text)
+            cleaned_text = parsed.get("content") or generated_text
+            raw_calls = parsed.get("tool_calls")
+            if raw_calls:
+                tool_calls = [
+                    self._normalize_tool_call(tc) for tc in raw_calls
+                ]
+                tool_calls = [tc for tc in tool_calls if tc is not None] or None
+        except Exception:
+            pass
+
+        return {"content": cleaned_text.strip(), "tool_calls": tool_calls}
+
+    def _normalize_tool_call(self, data: Any) -> Optional[Dict[str, Any]]:
+        """Normalise a parsed dict into the standard {id, name, arguments} format."""
+        if not isinstance(data, dict):
+            return None
+        name = data.get("name")
+        if not name:
+            # Some models nest under "function"
+            func = data.get("function", {})
+            name = func.get("name")
+            arguments = func.get("arguments")
+        else:
+            arguments = data.get("arguments", data.get("parameters", {}))
+
+        if not name:
+            return None
+
+        # Ensure arguments is a JSON string (matches OpenAI/HF driver format)
+        if isinstance(arguments, dict):
+            arguments = json.dumps(arguments)
+        elif arguments is None:
+            arguments = "{}"
+
+        return {
+            "id": data.get("id", "hf_local_call"),
+            "name": name,
+            "arguments": arguments,
+        }
 
     def embed(self, texts: List[str]) -> List[List[float]]:
         self._lazy_load()
