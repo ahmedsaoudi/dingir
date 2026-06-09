@@ -39,6 +39,7 @@ uv.lock
 # Prevents accidentally committing gigabytes of downloaded local model weights
 .cache/
 .huggingface/
+.antigravitycli
 huggingface_hub/
 cache/
 models/
