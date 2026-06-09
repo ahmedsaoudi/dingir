@@ -31,7 +31,11 @@ def web_search(query: str) -> str:
         for result_div in soup.select(".result"):
             link_tag = result_div.select_one("a.result__a")
             snippet_tag = result_div.select_one("a.result__snippet")
-            url = link_tag["href"] if link_tag and link_tag.has_attr("href") else ""
+            url = (
+                link_tag["href"]
+                if link_tag and link_tag.has_attr("href")
+                else ""
+            )
             snippet = snippet_tag.get_text(strip=True) if snippet_tag else ""
             if url or snippet:
                 results.append((url, snippet))
@@ -57,7 +61,9 @@ def web_search(query: str) -> str:
             results = parse_lite_results(soup)
         return results
 
-    search_url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
+    search_url = (
+        f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
+    )
     try:
         response = requests.get(search_url, headers=headers, timeout=10)
 
