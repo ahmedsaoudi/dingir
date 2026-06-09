@@ -7,67 +7,42 @@ from dingir.config import ModelConfig
 
 class Ollama(BaseLLM):
     def __init__(
-        self, id: str, config: ModelConfig, base_url: Optional[str] = None
+        self, id: str, config: ModelConfig, base_url: Optional[str] = None, native_tools: Optional[bool] = None
     ):
         super().__init__(id, config)
         self.client = ollama.Client(host=base_url) if base_url else ollama
+        self.use_native_tools = native_tools if native_tools is not None else True
 
-    def request(
+    def execute(
         self,
-        system: Optional[str],
-        messages: List[Dict[str, Any]],
+        formatted_messages: List[Dict[str, Any]],
         tools: List[Any],
+        **kwargs: Any,
     ) -> Dict[str, Any]:
-        formatted = []
-        if system:
-            formatted.append({"role": "system", "content": system})
-        for m in messages:
-            formatted.append({"role": m["role"], "content": m["content"]})
+        
+        if not self.use_native_tools:
+            formatted_messages = self._format_fallback_tools(formatted_messages)
 
-        options = {
-            "temperature": self.config.temperature,
-            "num_predict": self.config.max_tokens,
-        }
-        if self.config.top_p is not None:
-            options["top_p"] = self.config.top_p
-        if self.config.top_k is not None:
-            options["top_k"] = self.config.top_k
-        if self.config.stop_sequences:
-            options["stop"] = self.config.stop_sequences
-        if self.config.seed is not None:
-            options["seed"] = self.config.seed
-        if self.config.presence_penalty != 0.0:
-            options["presence_penalty"] = self.config.presence_penalty
-        if self.config.frequency_penalty != 0.0:
-            options["frequency_penalty"] = self.config.frequency_penalty
-        if self.config.min_p is not None:
-            options["min_p"] = self.config.min_p
-        if self.config.repeat_penalty is not None:
-            options["repeat_penalty"] = self.config.repeat_penalty
-
-        # Symmetrically maps formatted functional objects down to Ollama definitions
-        ollama_tools = []
-        for t in tools:
-            ollama_tools.append(
-                {
-                    "type": "function",
-                    "function": {
-                        "name": t.__name__,
-                        "description": t.__doc__ or "",
-                        "parameters": {"type": "object", "properties": {}},
-                    },
-                }
-            )
+        options = {}
+        for k, v in kwargs.items():
+            if k == "max_tokens":
+                options["num_predict"] = v
+            elif k == "response_format":
+                pass
+            else:
+                options[k] = v
 
         chat_kwargs = {
             "model": self.id,
-            "messages": formatted,
+            "messages": formatted_messages,
             "options": options,
         }
+
         if tools:
-            chat_kwargs["tools"] = ollama_tools
-        if self.config.response_format:
-            fmt = self.config.response_format
+            chat_kwargs["tools"] = self._get_serialized_tools(tools, formatted_messages)
+
+        if "response_format" in kwargs and kwargs["response_format"]:
+            fmt = kwargs["response_format"]
             if isinstance(fmt, dict) and fmt.get("type") == "json_object":
                 chat_kwargs["format"] = "json"
             elif fmt == "json":

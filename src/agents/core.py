@@ -23,92 +23,7 @@ class Agent:
         self.tools = tools or []
         self.guards = guards or []
 
-        # Build tool description list to append to system prompt
-        if self.tools:
-            tool_descriptions = []
-            for t in self.tools:
-                # Extract schema information
-                t_unwrapped = t
-                while hasattr(t_unwrapped, "__wrapped__"):
-                    t_unwrapped = t_unwrapped.__wrapped__
-                if hasattr(t_unwrapped, "_dingir_schema"):
-                    func = t_unwrapped._dingir_schema.get("function", {})
-                    tool_name = func.get("name", getattr(t_unwrapped, "__name__", "unknown"))
-                    desc = func.get(
-                        "description",
-                        getattr(t_unwrapped, "__doc__", "No description provided."),
-                    )
-                    properties = func.get("parameters", {}).get(
-                        "properties", {}
-                    )
-                    required = func.get("parameters", {}).get("required", [])
-                else:
-                    tool_name = getattr(t_unwrapped, "__name__", "unknown")
-                    desc = getattr(t_unwrapped, "__doc__", "No description provided.")
-                    properties = {}
-                    required = []
-                    try:
-                        import inspect
-
-                        sig = inspect.signature(t)
-                        for param_name, param in sig.parameters.items():
-                            if param_name in ["top_k"]:
-                                continue
-                            p_type = "string"
-                            if param.annotation in (int, float):
-                                p_type = "number"
-                            elif param.annotation == bool:
-                                p_type = "boolean"
-                            properties[param_name] = {
-                                "type": p_type,
-                                "description": f"The target value for {param_name}.",
-                            }
-                            if param.default == inspect.Parameter.empty:
-                                required.append(param_name)
-                    except Exception:
-                        pass
-
-                clean_desc = (
-                    desc.strip() if desc else "No description provided."
-                )
-
-                tool_descriptions.append(
-                    {
-                        "name": tool_name,
-                        "description": clean_desc,
-                        "parameters": {
-                            "properties": properties,
-                            "required": required,
-                        },
-                    }
-                )
-
-            tool_descriptions_json = json.dumps(
-                tool_descriptions, indent=2
-            )
-
-            # Enrich system prompt with a comprehensive instruction framework
-            tools_instruction_block = (
-                "\n\n"
-                "You can do function calling with the following functions:\n\n"
-
-                f"{tool_descriptions_json}\n\n"
-                "TOOL EXECUTION GUIDELINES:\n"
-                "1. Analyze the user query and select the most appropriate "
-                "tool from the toolset above. If no tool is needed or "
-                "suitable, respond directly using your general knowledge.\n"
-                "2. When executing a tool call, ensure you strictly adhere "
-                "to the types, descriptions, and required constraints "
-                "defined in the parameter schema.\n"
-                "3. All arguments must be passed as a valid JSON object "
-                "matching the defined parameter structure.\n"
-                "4. Always execute the tool through the provider's native "
-                "tool-calling interface. Do not simulate or mock tool "
-                "responses in your text content."
-            )
-            self.system = f"{system}{tools_instruction_block}"
-        else:
-            self.system = system
+        self.system = system
 
         if name:
             self.__name__ = name
@@ -218,85 +133,6 @@ class Agent:
                 self.log.merge(unwrapped.log)
             _active_agent.reset(token)
 
-    def _get_serialized_tools(self) -> List[Dict[str, Any]]:
-        """
-        Converts Python callables and sub-agents into clean LLM provider
-        schemas, with parameter serialization and hallucination schema recovery.
-        """
-        serialized = []
-        existing_names = set()
-        for t in self.tools:
-            # Check if it's a sub-agent or custom tool with an explicit predefined schema
-            t_unwrapped = t
-            while hasattr(t_unwrapped, "__wrapped__"):
-                t_unwrapped = t_unwrapped.__wrapped__
-            if hasattr(t_unwrapped, "_dingir_schema"):
-                schema = t_unwrapped._dingir_schema
-                existing_names.add(schema.get("function", {}).get("name", ""))
-                serialized.append(schema)
-            else:
-                # Dynamically construct a valid OpenAI/Anthropic function schema footprint
-                import inspect
-
-                properties = {}
-                required = []
-                try:
-                    sig = inspect.signature(t_unwrapped)
-                    for param_name, param in sig.parameters.items():
-                        if param_name in ["top_k"]:
-                            continue
-                        p_type = "string"
-                        if param.annotation in (int, float):
-                            p_type = "number"
-                        elif param.annotation == bool:
-                            p_type = "boolean"
-                        properties[param_name] = {
-                            "type": p_type,
-                            "description": f"The target value for {param_name}.",
-                        }
-                        if param.default == inspect.Parameter.empty:
-                            required.append(param_name)
-                except Exception:
-                    pass
-
-                existing_names.add(t_unwrapped.__name__)
-                serialized.append(
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": t.__name__,
-                            "description": t.__doc__
-                            or "No description provided.",
-                            "parameters": {
-                                "type": "object",
-                                "properties": properties,
-                                "required": required,
-                            },
-                        },
-                    }
-                )
-
-        # Inject dummy definitions for hallucinated/missing tools to prevent API gateway validation errors
-        for m in self.memory.messages:
-            if m.tool_calls:
-                for tc in m.tool_calls:
-                    name = tc.get("name")
-                    if name and name not in existing_names:
-                        existing_names.add(name)
-                        serialized.append(
-                            {
-                                "type": "function",
-                                "function": {
-                                    "name": name,
-                                    "description": "Hallucinated or unavailable tool helper.",
-                                    "parameters": {
-                                        "type": "object",
-                                        "properties": {},
-                                    },
-                                },
-                            }
-                        )
-        return serialized
 
     def respond(
         self,
@@ -329,9 +165,8 @@ class Agent:
 
                 serializable_messages = self.memory.to_messages()
 
-                tool_schemas = self._get_serialized_tools()
                 result = self.model.request(
-                    self.memory.system, serializable_messages, tool_schemas
+                    self.memory.system, serializable_messages, self.tools
                 )
 
                 reasoning = result.get("reasoning_content")

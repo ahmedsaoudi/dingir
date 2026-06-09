@@ -6,7 +6,7 @@ from dingir.config import ModelConfig
 
 
 class HuggingFaceLocal(BaseLLM):
-    """Django-grade driver for downloading and executing Hugging Face models
+    """Driver for downloading and executing Hugging Face models
     completely locally on your machine (supports both CPU and CUDA).
     """
 
@@ -16,10 +16,12 @@ class HuggingFaceLocal(BaseLLM):
         config: ModelConfig,
         task: str = "text-generation",
         api_key: Optional[str] = None,
+        native_tools: Optional[bool] = None,
     ):
         super().__init__(id, config)
         self.task = task
         self.api_key = api_key or os.environ.get("HF_TOKEN")
+        self.use_native_tools = native_tools if native_tools is not None else False
         self._pipeline = None
         self._tokenizer = None
         self._model = None
@@ -53,50 +55,55 @@ class HuggingFaceLocal(BaseLLM):
                 self.id, token=self.api_key
             ).to(device)
 
-    def request(
+    def execute(
         self,
-        system: Optional[str],
-        messages: List[Dict[str, Any]],
+        formatted_messages: List[Dict[str, Any]],
         tools: List[Any],
+        **kwargs: Any,
     ) -> Dict[str, Any]:
         self._lazy_load()
 
-        # Format conversation into standard template syntax
-        formatted_messages = []
-        if system:
-            formatted_messages.append({"role": "system", "content": system})
-        for m in messages:
-            formatted_messages.append(
-                {"role": m["role"], "content": m["content"]}
-            )
+        if not self.use_native_tools and tools:
+            formatted_messages = self._format_fallback_tools(formatted_messages)
 
         # Apply the model's native chat template
-        prompt = self._pipeline.tokenizer.apply_chat_template(
-            formatted_messages, tokenize=False, add_generation_prompt=True
-        )
+        template_kwargs = {
+            "conversation": formatted_messages,
+            "tokenize": False,
+            "add_generation_prompt": True
+        }
+        if tools:
+            template_kwargs["tools"] = self._get_serialized_tools(tools, formatted_messages)
+
+        prompt = self._pipeline.tokenizer.apply_chat_template(**template_kwargs)
 
         pipeline_kwargs = {
-            "max_new_tokens": self.config.max_tokens,
-            "temperature": self.config.temperature
-            if self.config.temperature > 0
-            else 0.01,
-            "do_sample": self.config.temperature > 0,
+            "max_new_tokens": kwargs.get("max_tokens", self.config.max_tokens),
             "pad_token_id": self._pipeline.tokenizer.eos_token_id,
         }
-        if self.config.repeat_penalty is not None:
-            pipeline_kwargs["repetition_penalty"] = self.config.repeat_penalty
-        if self.config.top_p is not None:
-            pipeline_kwargs["top_p"] = self.config.top_p
-        if self.config.top_k is not None:
-            pipeline_kwargs["top_k"] = self.config.top_k
-        if self.config.stop_sequences:
-            pipeline_kwargs["stop_strings"] = self.config.stop_sequences
+        
+        temperature = kwargs.get("temperature", self.config.temperature)
+        if temperature > 0:
+            pipeline_kwargs["temperature"] = temperature
+            pipeline_kwargs["do_sample"] = True
+        else:
+            pipeline_kwargs["temperature"] = 0.01
+            pipeline_kwargs["do_sample"] = False
+            
+        if "repetition_penalty" in kwargs:
+            pipeline_kwargs["repetition_penalty"] = kwargs["repetition_penalty"]
+        if "top_p" in kwargs:
+            pipeline_kwargs["top_p"] = kwargs["top_p"]
+        if "top_k" in kwargs:
+            pipeline_kwargs["top_k"] = kwargs["top_k"]
+        if "stop" in kwargs and kwargs["stop"]:
+            pipeline_kwargs["stop_strings"] = kwargs["stop"]
             pipeline_kwargs["tokenizer"] = self._pipeline.tokenizer
 
-        if self.config.seed is not None:
+        if "seed" in kwargs and kwargs["seed"] is not None:
             import torch
 
-            torch.manual_seed(self.config.seed)
+            torch.manual_seed(kwargs["seed"])
 
         outputs = self._pipeline(prompt, **pipeline_kwargs)
 

@@ -1,4 +1,5 @@
 import inspect
+import os
 from typing import Any, Dict, List, Optional
 
 from dingir.agents.llms.base import BaseLLM
@@ -6,38 +7,7 @@ from dingir.config import ModelConfig
 from openai import OpenAI as OpenAIClient
 
 
-def convert_to_openai_tool(func) -> Dict[str, Any]:
-    if isinstance(func, dict):
-        return func
-    sig = inspect.signature(func)
-    properties = {}
-    required = []
-    for name, param in sig.parameters.items():
-        if name in ["top_k"]:  # Skip standard store macro parameter internals
-            continue
-        p_type = "string"
-        if param.annotation in (int, float):
-            p_type = "number"
-        elif param.annotation == bool:
-            p_type = "boolean"
-        properties[name] = {
-            "type": p_type,
-            "description": f"The argument target value for {name}.",
-        }
-        if param.default == inspect.Parameter.empty:
-            required.append(name)
-    return {
-        "type": "function",
-        "function": {
-            "name": func.__name__,
-            "description": func.__doc__ or f"Execute function {func.__name__}",
-            "parameters": {
-                "type": "object",
-                "properties": properties,
-                "required": required,
-            },
-        },
-    }
+
 
 
 class OpenAI(BaseLLM):
@@ -47,75 +17,70 @@ class OpenAI(BaseLLM):
         config: ModelConfig,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
+        native_tools: Optional[bool] = None,
     ):
         super().__init__(id, config)
+        
+        resolved_api_key = (
+            api_key
+            or os.environ.get("OPENAI_COMPATIBLE_API_KEY")
+            or os.environ.get("OPENAI_API_KEY")
+        )
+        resolved_base_url = base_url or os.environ.get(
+            "OPENAI_COMPATIBLE_BASE_URL"
+        )
+        
         client_kwargs = {}
-        if api_key:
-            client_kwargs["api_key"] = api_key
-        if base_url:
-            client_kwargs["base_url"] = base_url
+        if resolved_api_key:
+            client_kwargs["api_key"] = resolved_api_key
+        if resolved_base_url:
+            client_kwargs["base_url"] = resolved_base_url
         if self.config.max_retries is not None:
             client_kwargs["max_retries"] = self.config.max_retries
         if self.config.timeout is not None:
             client_kwargs["timeout"] = self.config.timeout
+            
         self.sync_client = OpenAIClient(**client_kwargs)
+        self.use_native_tools = native_tools if native_tools is not None else True
 
-    def request(
+    def execute(
         self,
-        system: Optional[str],
-        messages: List[Dict[str, Any]],
+        formatted_messages: List[Dict[str, Any]],
         tools: List[Any],
+        **kwargs: Any,
     ) -> Dict[str, Any]:
-        formatted_messages = []
-        if system:
-            formatted_messages.append({"role": "system", "content": system})
-        for m in messages:
-            msg = {"role": m["role"], "content": m["content"]}
-            if m.get("tool_calls"):
-                msg["tool_calls"] = [
-                    {
-                        "id": tc.get("id"),
-                        "type": "function",
-                        "function": {
-                            "name": tc.get("name"),
-                            "arguments": tc.get("arguments"),
-                        },
-                    }
-                    for tc in m["tool_calls"]
-                ]
-            if m.get("tool_call_id"):
-                msg["tool_call_id"] = m["tool_call_id"]
-                msg["role"] = "tool"
-                msg["name"] = m.get("name")
-            formatted_messages.append(msg)
+        
+        if not self.use_native_tools:
+            formatted_messages = self._format_fallback_tools(formatted_messages)
 
-        args = {
-            "model": self.id,
-            "messages": formatted_messages,
-            "temperature": self.config.temperature,
-            "max_tokens": self.config.max_tokens,
+        # Separate standard kwargs from extra_body
+        extra_body = {}
+        standard_kwargs = {}
+        
+        # Mapping known standard arguments vs extra arguments
+        valid_openai_kwargs = {
+            "temperature", "max_tokens", "top_p", "stop",
+            "presence_penalty", "frequency_penalty", "seed",
+            "response_format", "logit_bias", "timeout"
         }
-        if self.config.top_p is not None:
-            args["top_p"] = self.config.top_p
-        if self.config.stop_sequences:
-            args["stop"] = self.config.stop_sequences
-        if self.config.presence_penalty != 0.0:
-            args["presence_penalty"] = self.config.presence_penalty
-        if self.config.frequency_penalty != 0.0:
-            args["frequency_penalty"] = self.config.frequency_penalty
-        if self.config.seed is not None:
-            args["seed"] = self.config.seed
-        if self.config.response_format is not None:
-            args["response_format"] = self.config.response_format
-        if self.config.logit_bias is not None:
-            args["logit_bias"] = self.config.logit_bias
-        if self.config.timeout is not None:
-            args["timeout"] = self.config.timeout
+        
+        for k, v in kwargs.items():
+            if k in valid_openai_kwargs:
+                standard_kwargs[k] = v
+            else:
+                extra_body[k] = v
+                
+        if extra_body:
+            standard_kwargs["extra_body"] = extra_body
 
         if tools:
-            args["tools"] = [convert_to_openai_tool(t) for t in tools]
+            standard_kwargs["tools"] = self._get_serialized_tools(tools, formatted_messages)
 
-        response = self.sync_client.chat.completions.create(**args)
+        response = self.sync_client.chat.completions.create(
+            model=self.id,
+            messages=formatted_messages,
+            **standard_kwargs
+        )
         choice = response.choices[0].message
 
         tc_out = None
@@ -129,25 +94,13 @@ class OpenAI(BaseLLM):
                 for tc in choice.tool_calls
             ]
 
-        reasoning = getattr(choice, "reasoning_content", None)
-        content = choice.content or ""
-
-        # Fallback to parse tags <think>...</think> or <|think|>...</|think|> if no native reasoning_content is returned
-        if not reasoning and content:
-            import re
-            match = re.search(r'<(?:think|\|think\|)>(.*?)</(?:think|\|think\|)>', content, re.DOTALL)
-            if match:
-                reasoning = match.group(1).strip()
-                content = re.sub(r'<(?:think|\|think\|)>.*?</(?:think|\|think\|)>\s*', '', content, flags=re.DOTALL).strip()
-
         return {
-            "content": content,
+            "content": choice.content or "",
             "tool_calls": tc_out,
-            "reasoning_content": reasoning,
+            "reasoning_content": getattr(choice, "reasoning_content", None),
         }
 
     def embed(self, texts: List[str]) -> List[List[float]]:
-        """Integrated symmetrical embedding implementation hook."""
         response = self.sync_client.embeddings.create(
             input=texts, model=self.id
         )

@@ -12,59 +12,49 @@ class HuggingFace(BaseLLM):
     """
 
     def __init__(
-        self, id: str, config: ModelConfig, api_key: Optional[str] = None
+        self, id: str, config: ModelConfig, api_key: Optional[str] = None, native_tools: Optional[bool] = None
     ):
         super().__init__(id, config)
         self.client = InferenceClient(
             model=id, token=api_key or os.environ.get("HF_TOKEN")
         )
+        self.use_native_tools = native_tools if native_tools is not None else False
 
-    def request(
+    def execute(
         self,
-        system: Optional[str],
-        messages: List[Dict[str, Any]],
+        formatted_messages: List[Dict[str, Any]],
         tools: List[Any],
+        **kwargs: Any,
     ) -> Dict[str, Any]:
-        # Formulate a standard chat conversation sequence payload
-        formatted_messages = []
-        if system:
-            formatted_messages.append({"role": "system", "content": system})
-        for m in messages:
-            formatted_messages.append(
-                {"role": m["role"], "content": m["content"]}
-            )
+        if "temperature" in kwargs and kwargs["temperature"] <= 0:
+            kwargs["temperature"] = 0.01
 
-        # Utilise the unified chat_completion API
         chat_kwargs = {
             "messages": formatted_messages,
-            "max_tokens": self.config.max_tokens,
-            "temperature": self.config.temperature
-            if self.config.temperature > 0
-            else 0.01,
+            **kwargs
         }
-        if self.config.top_p is not None:
-            chat_kwargs["top_p"] = self.config.top_p
-        if self.config.top_k is not None:
-            chat_kwargs["top_k"] = self.config.top_k
-        if self.config.stop_sequences:
-            chat_kwargs["stop"] = self.config.stop_sequences
-        if self.config.seed is not None:
-            chat_kwargs["seed"] = self.config.seed
-        if self.config.response_format is not None:
-            chat_kwargs["response_format"] = self.config.response_format
-        if self.config.presence_penalty != 0.0:
-            chat_kwargs["presence_penalty"] = self.config.presence_penalty
-        if self.config.frequency_penalty != 0.0:
-            chat_kwargs["frequency_penalty"] = self.config.frequency_penalty
-        if self.config.timeout is not None:
-            chat_kwargs["timeout"] = self.config.timeout
+        
+        if tools:
+            chat_kwargs["tools"] = self._get_serialized_tools(tools, formatted_messages)
 
         response = self.client.chat_completion(**chat_kwargs)
 
         choice = response.choices[0].message
+        
+        tc_out = None
+        if getattr(choice, "tool_calls", None):
+            tc_out = [
+                {
+                    "id": tc.id,
+                    "name": tc.function.name,
+                    "arguments": tc.function.arguments,
+                }
+                for tc in choice.tool_calls
+            ]
+            
         return {
             "content": choice.content or "",
-            "tool_calls": None,  # Serverless text-generation defaults skip native tool-use tracking
+            "tool_calls": tc_out,
         }
 
     def embed(self, texts: List[str]) -> List[List[float]]:

@@ -12,14 +12,20 @@ class Gemini(BaseLLM):
         super().__init__(id, config)
         self.client = Client(api_key=api_key) if api_key else Client()
 
-    def request(
+    def execute(
         self,
-        system: Optional[str],
-        messages: List[Dict[str, Any]],
+        formatted_messages: List[Dict[str, Any]],
         tools: List[Any],
+        **kwargs: Any,
     ) -> Dict[str, Any]:
         contents = []
-        for m in messages:
+        system = None
+        
+        for m in formatted_messages:
+            if m["role"] == "system":
+                system = m["content"]
+                continue
+                
             role = "model" if m["role"] == "assistant" else "user"
             contents.append(
                 types.Content(
@@ -27,21 +33,22 @@ class Gemini(BaseLLM):
                 )
             )
 
-        gen_config_kwargs = {
-            "temperature": self.config.temperature,
-            "max_output_tokens": self.config.max_tokens,
-            "system_instruction": system,
-        }
-        if self.config.top_p is not None:
-            gen_config_kwargs["top_p"] = self.config.top_p
-        if self.config.top_k is not None:
-            gen_config_kwargs["top_k"] = self.config.top_k
-        if self.config.stop_sequences:
-            gen_config_kwargs["stop_sequences"] = self.config.stop_sequences
-        if self.config.seed is not None:
-            gen_config_kwargs["seed"] = self.config.seed
-        if self.config.response_format:
-            fmt = self.config.response_format
+        gen_config_kwargs = {}
+        for k, v in kwargs.items():
+            if k == "max_tokens":
+                gen_config_kwargs["max_output_tokens"] = v
+            elif k == "stop":
+                gen_config_kwargs["stop_sequences"] = v
+            elif k == "response_format":
+                pass
+            else:
+                gen_config_kwargs[k] = v
+                
+        if system:
+            gen_config_kwargs["system_instruction"] = system
+
+        if "response_format" in kwargs and kwargs["response_format"]:
+            fmt = kwargs["response_format"]
             if isinstance(fmt, dict) and fmt.get("type") == "json_object":
                 gen_config_kwargs["response_mime_type"] = "application/json"
             elif fmt == "json":
@@ -49,15 +56,16 @@ class Gemini(BaseLLM):
 
         gen_config = types.GenerateContentConfig(**gen_config_kwargs)
         if tools:
+            schemas = self._get_serialized_tools(tools, formatted_messages)
             gen_config.tools = [
                 types.Tool(
                     function_declarations=[
                         types.FunctionDeclaration(
-                            name=t.__name__,
-                            description=t.__doc__ or f"Execute {t.__name__}",
-                            parameters=types.Schema(type="OBJECT"),
+                            name=s["function"]["name"],
+                            description=s["function"]["description"],
+                            parameters=s["function"]["parameters"],
                         )
-                        for t in tools
+                        for s in schemas
                     ]
                 )
             ]
