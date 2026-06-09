@@ -17,7 +17,6 @@ class OpenAI(BaseLLM):
         config: ModelConfig,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
-        native_tools: Optional[bool] = None,
     ):
         super().__init__(id, config)
         
@@ -41,7 +40,7 @@ class OpenAI(BaseLLM):
             client_kwargs["timeout"] = self.config.timeout
             
         self.sync_client = OpenAIClient(**client_kwargs)
-        self.use_native_tools = native_tools if native_tools is not None else True
+        self.use_native_tools = True
 
     def execute(
         self,
@@ -50,7 +49,7 @@ class OpenAI(BaseLLM):
         **kwargs: Any,
     ) -> Dict[str, Any]:
         
-        if not self.use_native_tools:
+        if not self.use_native_tools and tools:
             formatted_messages = self._format_fallback_tools(formatted_messages)
 
         # Separate standard kwargs from extra_body
@@ -73,7 +72,7 @@ class OpenAI(BaseLLM):
         if extra_body:
             standard_kwargs["extra_body"] = extra_body
 
-        if tools:
+        if tools and self.use_native_tools:
             standard_kwargs["tools"] = self._get_serialized_tools(tools, formatted_messages)
 
         response = self.sync_client.chat.completions.create(

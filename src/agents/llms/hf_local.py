@@ -17,12 +17,10 @@ class HuggingFaceLocal(BaseLLM):
         config: ModelConfig,
         task: str = "text-generation",
         api_key: Optional[str] = None,
-        native_tools: Optional[bool] = None,
     ):
         super().__init__(id, config)
         self.task = task
         self.api_key = api_key or os.environ.get("HF_TOKEN")
-        self.use_native_tools = native_tools if native_tools is not None else False
         self._pipeline = None
         self._tokenizer = None
         self._model = None
@@ -56,13 +54,39 @@ class HuggingFaceLocal(BaseLLM):
                 self.id, token=self.api_key
             ).to(device)
 
+    def request(
+        self,
+        system: Optional[str],
+        messages: List[Dict[str, Any]],
+        tools: List[Any],
+    ) -> Dict[str, Any]:
+        """Override to auto-detect native tool support before the base class
+        decides on the fallback path."""
+        self._lazy_load()
+        self.use_native_tools = self._supports_native_tools()
+        return super().request(system, messages, tools)
+
+    def _supports_native_tools(self) -> bool:
+        """Check if the model's chat template supports native tool calling
+        by inspecting the Jinja2 template for references to a 'tools' variable."""
+        if self._pipeline is None:
+            return False
+        template = getattr(self._pipeline.tokenizer, "chat_template", None)
+        if template is None:
+            return False
+        if isinstance(template, dict):
+            # Some tokenizers define multiple template variants
+            if "tool_use" in template:
+                return True
+            template = " ".join(str(v) for v in template.values())
+        return "tools" in template
+
     def execute(
         self,
         formatted_messages: List[Dict[str, Any]],
         tools: List[Any],
         **kwargs: Any,
     ) -> Dict[str, Any]:
-        self._lazy_load()
 
         if not self.use_native_tools and tools:
             formatted_messages = self._format_fallback_tools(formatted_messages)
@@ -73,7 +97,7 @@ class HuggingFaceLocal(BaseLLM):
             "tokenize": False,
             "add_generation_prompt": True
         }
-        if tools:
+        if tools and self.use_native_tools:
             template_kwargs["tools"] = self._get_serialized_tools(tools, formatted_messages)
 
         prompt = self._pipeline.tokenizer.apply_chat_template(**template_kwargs)

@@ -12,13 +12,13 @@ class HuggingFace(BaseLLM):
     """
 
     def __init__(
-        self, id: str, config: ModelConfig, api_key: Optional[str] = None, native_tools: Optional[bool] = None
+        self, id: str, config: ModelConfig, api_key: Optional[str] = None
     ):
         super().__init__(id, config)
         self.client = InferenceClient(
             model=id, token=api_key or os.environ.get("HF_TOKEN")
         )
-        self.use_native_tools = native_tools if native_tools is not None else False
+        self.use_native_tools = True
 
     def execute(
         self,
@@ -26,6 +26,9 @@ class HuggingFace(BaseLLM):
         tools: List[Any],
         **kwargs: Any,
     ) -> Dict[str, Any]:
+        if not self.use_native_tools and tools:
+            formatted_messages = self._format_fallback_tools(formatted_messages)
+
         if "temperature" in kwargs and kwargs["temperature"] <= 0:
             kwargs["temperature"] = 0.01
 
@@ -34,7 +37,7 @@ class HuggingFace(BaseLLM):
             **kwargs
         }
         
-        if tools:
+        if tools and self.use_native_tools:
             chat_kwargs["tools"] = self._get_serialized_tools(tools, formatted_messages)
 
         response = self.client.chat_completion(**chat_kwargs)

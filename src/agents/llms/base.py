@@ -65,7 +65,16 @@ class BaseLLM(ABC):
         kwargs = self._map_config()
         
         # [HOOK]: The child driver executes the actual API call
-        response = self.execute(formatted_messages, tools, **kwargs)
+        try:
+            response = self.execute(formatted_messages, tools, **kwargs)
+        except Exception as e:
+            if tools and use_native_tools and self._is_tool_unsupported_error(e):
+                self.use_native_tools = False
+                system = self._format_fallback_prompt(system, tools, messages)
+                formatted_messages = self._format_messages(system, messages)
+                response = self.execute(formatted_messages, tools, **kwargs)
+            else:
+                raise e
         
         # [POST-PROCESSING]: Standardize deepseek/gemini style <think> blocks
         content = response.get("content", "")
@@ -78,6 +87,34 @@ class BaseLLM(ABC):
                 response["reasoning_content"] = parsed_reasoning
                 
         return response
+
+    def _is_tool_unsupported_error(self, e: Exception) -> bool:
+        """Helper to check if an exception was caused by a lack of tool calling support."""
+        err_msg = str(e).lower()
+        tool_keywords = ["tool", "tools", "function", "functions"]
+        parameter_keywords = [
+            "unrecognized", "unexpected", "invalid", "not supported", 
+            "validation", "extra fields", "cannot", "unknown", "400", "422",
+            "not implemented", "bad request", "schema"
+        ]
+        
+        has_tool = any(tk in err_msg for tk in tool_keywords)
+        has_param = any(pk in err_msg for pk in parameter_keywords)
+        
+        if has_tool and has_param:
+            return True
+            
+        # Inspect HTTP status code if present
+        status_code = getattr(e, "status_code", None)
+        if status_code is None:
+            # Check response attribute
+            response = getattr(e, "response", None)
+            if response is not None:
+                status_code = getattr(response, "status_code", None)
+        if status_code in (400, 422) and has_tool:
+            return True
+            
+        return False
 
     @abstractmethod
     def execute(
