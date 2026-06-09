@@ -8,6 +8,26 @@ from dingir.config import ModelConfig
 
 
 class BaseLLM(ABC):
+    """
+    The BaseLLM acts as the core orchestration engine for all language model providers.
+    It implements the Template Method design pattern to centralize boilerplate logic,
+    ensuring all drivers (OpenAI, Gemini, HuggingFace, etc.) behave identically.
+    
+    Architecture Highlights:
+    1. Unified Configuration: Maps a single `ModelConfig` instance to the generic 
+       API kwargs (like `temperature`, `max_tokens`) so drivers don't have to guess.
+    2. Tool Serialization: Provides a standard engine to parse raw Python functions
+       and their docstrings into industry-standard JSON Schemas.
+    3. Tool Fallbacks (`use_native_tools=False`): Automatically handles older or 
+       quirky API servers that crash when seeing 'tool' roles in message history. 
+       It rewrites past tool calls as standard text and injects strict JSON schemas 
+       into the system prompt to guide local models.
+    4. Reasoning Extraction: Automatically extracts `<think>` or `<|think|>` tags 
+       from generic models that don't natively expose a separate reasoning field.
+    
+    Child classes only need to implement the `execute()` method to handle the 
+    actual API network call and return a standard dictionary of the result.
+    """
     def __init__(self, id: str, config: Any):
         self.id = id
         if isinstance(config, list):
@@ -25,19 +45,29 @@ class BaseLLM(ABC):
         messages: List[Dict[str, Any]],
         tools: List[Any],
     ) -> Dict[str, Any]:
-        """Standardized template method for LLM requests."""
+        """
+        Standardized template method for LLM requests.
+        This handles the entire lifecycle of a request from formatting to execution
+        and post-processing, allowing drivers to focus purely on the network call.
+        """
+        # Determine if this specific driver execution requires manual tool fallbacks
         use_native_tools = getattr(self, "use_native_tools", True)
         
+        # If the local API server crashes on native tools, we inject the JSON schema
+        # directly into the System Prompt so the model still knows how to use them.
         if tools and not use_native_tools:
             system = self._format_fallback_prompt(system, tools, messages)
             
+        # Unify the message history (e.g. converting past tool calls to text if fallback is enabled)
         formatted_messages = self._format_messages(system, messages)
+        
+        # Map the user's unified ModelConfig into generic API kwargs (temperature, max_tokens, etc.)
         kwargs = self._map_config()
         
-        # Execute provider-specific logic
+        # [HOOK]: The child driver executes the actual API call
         response = self.execute(formatted_messages, tools, **kwargs)
         
-        # Apply standard post-processing (e.g., parsing <think> tags if reasoning_content is absent)
+        # [POST-PROCESSING]: Standardize deepseek/gemini style <think> blocks
         content = response.get("content", "")
         reasoning = response.get("reasoning_content")
         
@@ -67,7 +97,9 @@ class BaseLLM(ABC):
         if system:
             formatted.append({"role": "system", "content": system})
         for m in messages:
-            formatted.append({"role": m["role"], "content": m.get("content", "")})
+            formatted.append(
+                {"role": m["role"], "content": m.get("content", "")}
+            )
             # tool calls are left intact for specific drivers to format
             if "tool_calls" in m:
                 formatted[-1]["tool_calls"] = m["tool_calls"]
@@ -104,12 +136,16 @@ class BaseLLM(ABC):
             kwargs["repetition_penalty"] = self.config.repeat_penalty
         if self.config.logit_bias is not None:
             kwargs["logit_bias"] = self.config.logit_bias
-            
+
         return kwargs
 
     def _parse_reasoning(self, content: str) -> tuple[str, Optional[str]]:
         """Extracts <think> blocks and returns (cleaned_content, reasoning)."""
-        match = re.search(r"<(?:think|\|think\|)>(.*?)</(?:think|\|think\|)>", content, re.DOTALL)
+        match = re.search(
+            r"<(?:think|\|think\|)>(.*?)</(?:think|\|think\|)>",
+            content,
+            re.DOTALL,
+        )
         if match:
             reasoning = match.group(1).strip()
             cleaned_content = re.sub(
@@ -121,7 +157,9 @@ class BaseLLM(ABC):
             return cleaned_content, reasoning
         return content, None
 
-    def _format_fallback_tools(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _format_fallback_tools(
+        self, messages: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
         """Formats tool calls as standard assistant/user text for models lacking native tool support."""
         formatted = []
         for m in messages:
@@ -136,9 +174,7 @@ class BaseLLM(ABC):
                     )
                 calls_summary = "\n".join(calls_text)
                 content = (
-                    f"{content}\n{calls_summary}"
-                    if content
-                    else calls_summary
+                    f"{content}\n{calls_summary}" if content else calls_summary
                 )
 
             if role == "tool":
@@ -150,14 +186,23 @@ class BaseLLM(ABC):
         return formatted
 
     def _convert_to_json_schema(self, func) -> Dict[str, Any]:
+        """
+        Introspects a raw Python callable, parsing its type hints and docstring,
+        and dynamically translates it into a strict OpenAI-style JSON Schema.
+        This provides the model with exact parameter requirements and descriptions.
+        """
         if isinstance(func, dict):
             return func
         sig = inspect.signature(func)
         docstring = inspect.getdoc(func) or ""
-        
+
         param_docs = {}
         if docstring:
-            matches = re.finditer(r"(?:- )?(?::param )?([a-zA-Z0-9_]+)(?: \(.*?\))?[:\-]\s*(.*?)(?=\n\s*(?:[a-zA-Z0-9_]+[:\-]|:param|\Z))", docstring, re.DOTALL)
+            matches = re.finditer(
+                r"(?:- )?(?::param )?([a-zA-Z0-9_]+)(?: \(.*?\))?[:\-]\s*(.*?)(?=\n\s*(?:[a-zA-Z0-9_]+[:\-]|:param|\Z))",
+                docstring,
+                re.DOTALL,
+            )
             for match in matches:
                 param_docs[match.group(1)] = match.group(2).strip()
 
@@ -171,18 +216,22 @@ class BaseLLM(ABC):
                 p_type = "number"
             elif param.annotation == bool:
                 p_type = "boolean"
-                
-            desc = param_docs.get(name) or f"The argument target value for {name}."
+
+            desc = (
+                param_docs.get(name) or f"The argument target value for {name}."
+            )
             desc = re.sub(r"\s+", " ", desc).strip()
-            
+
             properties[name] = {
                 "type": p_type,
                 "description": desc,
             }
             if param.default == inspect.Parameter.empty:
                 required.append(name)
-                
-        main_desc = re.split(r"\n\s*(?:Args|Arguments|Parameters|:param)\s*:?", docstring)[0].strip()
+
+        main_desc = re.split(
+            r"\n\s*(?:Args|Arguments|Parameters|:param)\s*:?", docstring
+        )[0].strip()
         if not main_desc:
             main_desc = f"Execute function {func.__name__}"
 
@@ -199,7 +248,15 @@ class BaseLLM(ABC):
             },
         }
 
-    def _get_serialized_tools(self, tools: List[Any], messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _get_serialized_tools(
+        self, tools: List[Any], messages: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Generates the final list of JSON Schemas for all tools.
+        Crucially, this method inspects the conversation history (`messages`) for any
+        hallucinated tool calls (tools the model invented) and automatically injects
+        dummy JSON schemas for them to prevent strict API gateways from crashing the request.
+        """
         serialized = []
         existing_names = set()
         for t in tools:
@@ -213,7 +270,9 @@ class BaseLLM(ABC):
             else:
                 try:
                     schema = self._convert_to_json_schema(t_unwrapped)
-                    existing_names.add(schema.get("function", {}).get("name", ""))
+                    existing_names.add(
+                        schema.get("function", {}).get("name", "")
+                    )
                     serialized.append(schema)
                 except Exception:
                     pass
@@ -239,23 +298,35 @@ class BaseLLM(ABC):
                         )
         return serialized
 
-    def _format_fallback_prompt(self, system: Optional[str], tools: List[Any], messages: List[Dict[str, Any]]) -> str:
+    def _format_fallback_prompt(
+        self,
+        system: Optional[str],
+        tools: List[Any],
+        messages: List[Dict[str, Any]],
+    ) -> str:
+        """
+        Injects a strict instruction block and the JSON schemas directly into the
+        system prompt. This is ONLY triggered if `use_native_tools=False`, giving
+        local models a manual map of how to execute tools without relying on their backend.
+        """
         if not tools:
             return system or ""
-        
+
         tool_schemas = self._get_serialized_tools(tools, messages)
-        
+
         tool_descriptions = []
         for schema in tool_schemas:
             func = schema.get("function", {})
-            tool_descriptions.append({
-                "name": func.get("name"),
-                "description": func.get("description"),
-                "parameters": func.get("parameters")
-            })
-            
+            tool_descriptions.append(
+                {
+                    "name": func.get("name"),
+                    "description": func.get("description"),
+                    "parameters": func.get("parameters"),
+                }
+            )
+
         tool_descriptions_json = json.dumps(tool_descriptions, indent=2)
-        
+
         tools_instruction_block = (
             "\n\n"
             "You can do function calling with the following functions:\n\n"
