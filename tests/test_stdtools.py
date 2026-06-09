@@ -216,3 +216,16 @@ class TestFetchWebpage:
         mock_get.return_value = mock_response
         result = fetch_webpage("http://example.com/missing")
         assert "404" in result
+
+    @patch("dingir.agents.stdtools.web.requests.get")
+    def test_preserves_links_as_absolute_urls(self, mock_get):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = (
+            '<html><body>Go to <a href="/about">About Us</a> or '
+            '<a href="https://other.com/help">Help</a></body></html>'
+        )
+        mock_get.return_value = mock_response
+        result = fetch_webpage("http://example.com/home")
+        assert "[About Us](http://example.com/about)" in result
+        assert "[Help](https://other.com/help)" in result

@@ -90,7 +90,7 @@ def web_search(query: str) -> str:
 
 
 def fetch_webpage(url: str) -> str:
-    """Fetches the text content of a webpage at the given URL, stripping all HTML markup. Returns up to 4000 characters."""
+    """Fetches the text content of a webpage at the given URL, stripping all HTML markup, while preserving links (absolute URLs) for ease of traversal. Returns up to 4000 characters."""
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     try:
         response = requests.get(url, headers=headers, timeout=10)
@@ -99,6 +99,18 @@ def fetch_webpage(url: str) -> str:
             # Remove scripts and styles
             for tag in soup(["script", "style"]):
                 tag.decompose()
+
+            # Format <a> tags to include their absolute href URLs
+            for a in soup.find_all("a", href=True):
+                href = a["href"].strip()
+                if href:
+                    absolute_href = urllib.parse.urljoin(url, href)
+                    text = a.get_text().strip()
+                    if text:
+                        a.replace_with(f" [{text}]({absolute_href}) ")
+                    else:
+                        a.replace_with(f" ({absolute_href}) ")
+
             clean_text = soup.get_text(separator=" ", strip=True)
             return clean_text[:4000]
         return f"Webpage fetch failed with status code {response.status_code}."
