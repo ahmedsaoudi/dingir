@@ -7,11 +7,11 @@ from dingir.config import ModelConfig
 
 class Ollama(BaseLLM):
     def __init__(
-        self, id: str, config: ModelConfig, base_url: Optional[str] = None, native_tools: Optional[bool] = None
+        self, id: str, config: ModelConfig, base_url: Optional[str] = None
     ):
         super().__init__(id, config)
         self.client = ollama.Client(host=base_url) if base_url else ollama
-        self.use_native_tools = native_tools if native_tools is not None else True
+        self.use_native_tools = True
 
     def execute(
         self,
@@ -20,7 +20,7 @@ class Ollama(BaseLLM):
         **kwargs: Any,
     ) -> Dict[str, Any]:
         
-        if not self.use_native_tools:
+        if not self.use_native_tools and tools:
             formatted_messages = self._format_fallback_tools(formatted_messages)
 
         options = {}
@@ -38,7 +38,7 @@ class Ollama(BaseLLM):
             "options": options,
         }
 
-        if tools:
+        if tools and self.use_native_tools:
             chat_kwargs["tools"] = self._get_serialized_tools(tools, formatted_messages)
 
         if "response_format" in kwargs and kwargs["response_format"]:

@@ -1,3 +1,4 @@
+import json
 import os
 from typing import Any, Dict, List, Optional
 
@@ -16,12 +17,10 @@ class HuggingFaceLocal(BaseLLM):
         config: ModelConfig,
         task: str = "text-generation",
         api_key: Optional[str] = None,
-        native_tools: Optional[bool] = None,
     ):
         super().__init__(id, config)
         self.task = task
         self.api_key = api_key or os.environ.get("HF_TOKEN")
-        self.use_native_tools = native_tools if native_tools is not None else False
         self._pipeline = None
         self._tokenizer = None
         self._model = None
@@ -55,13 +54,39 @@ class HuggingFaceLocal(BaseLLM):
                 self.id, token=self.api_key
             ).to(device)
 
+    def request(
+        self,
+        system: Optional[str],
+        messages: List[Dict[str, Any]],
+        tools: List[Any],
+    ) -> Dict[str, Any]:
+        """Override to auto-detect native tool support before the base class
+        decides on the fallback path."""
+        self._lazy_load()
+        self.use_native_tools = self._supports_native_tools()
+        return super().request(system, messages, tools)
+
+    def _supports_native_tools(self) -> bool:
+        """Check if the model's chat template supports native tool calling
+        by inspecting the Jinja2 template for references to a 'tools' variable."""
+        if self._pipeline is None:
+            return False
+        template = getattr(self._pipeline.tokenizer, "chat_template", None)
+        if template is None:
+            return False
+        if isinstance(template, dict):
+            # Some tokenizers define multiple template variants
+            if "tool_use" in template:
+                return True
+            template = " ".join(str(v) for v in template.values())
+        return "tools" in template
+
     def execute(
         self,
         formatted_messages: List[Dict[str, Any]],
         tools: List[Any],
         **kwargs: Any,
     ) -> Dict[str, Any]:
-        self._lazy_load()
 
         if not self.use_native_tools and tools:
             formatted_messages = self._format_fallback_tools(formatted_messages)
@@ -72,7 +97,7 @@ class HuggingFaceLocal(BaseLLM):
             "tokenize": False,
             "add_generation_prompt": True
         }
-        if tools:
+        if tools and self.use_native_tools:
             template_kwargs["tools"] = self._get_serialized_tools(tools, formatted_messages)
 
         prompt = self._pipeline.tokenizer.apply_chat_template(**template_kwargs)
@@ -109,7 +134,53 @@ class HuggingFaceLocal(BaseLLM):
 
         # Extract only the newly generated token content substring
         generated_text = outputs[0]["generated_text"][len(prompt) :]
-        return {"content": generated_text.strip(), "tool_calls": None}
+
+        # Use the tokenizer's native parser to extract tool calls, thinking,
+        # and content. This handles model-specific formats automatically
+        # (Hermes, Qwen, Mistral, Llama, etc.).
+        tool_calls = None
+        cleaned_text = generated_text
+        try:
+            parsed = self._pipeline.tokenizer.parse_response(generated_text)
+            cleaned_text = parsed.get("content") or generated_text
+            raw_calls = parsed.get("tool_calls")
+            if raw_calls:
+                tool_calls = [
+                    self._normalize_tool_call(tc) for tc in raw_calls
+                ]
+                tool_calls = [tc for tc in tool_calls if tc is not None] or None
+        except Exception:
+            pass
+
+        return {"content": cleaned_text.strip(), "tool_calls": tool_calls}
+
+    def _normalize_tool_call(self, data: Any) -> Optional[Dict[str, Any]]:
+        """Normalise a parsed dict into the standard {id, name, arguments} format."""
+        if not isinstance(data, dict):
+            return None
+        name = data.get("name")
+        if not name:
+            # Some models nest under "function"
+            func = data.get("function", {})
+            name = func.get("name")
+            arguments = func.get("arguments")
+        else:
+            arguments = data.get("arguments", data.get("parameters", {}))
+
+        if not name:
+            return None
+
+        # Ensure arguments is a JSON string (matches OpenAI/HF driver format)
+        if isinstance(arguments, dict):
+            arguments = json.dumps(arguments)
+        elif arguments is None:
+            arguments = "{}"
+
+        return {
+            "id": data.get("id", "hf_local_call"),
+            "name": name,
+            "arguments": arguments,
+        }
 
     def embed(self, texts: List[str]) -> List[List[float]]:
         self._lazy_load()
