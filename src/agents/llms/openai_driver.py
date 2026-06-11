@@ -14,7 +14,7 @@ class OpenAI(BaseLLM):
         base_url: Optional[str] = None,
     ):
         super().__init__(id, config)
-        
+
         client_kwargs = {}
         if api_key is not None:
             client_kwargs["api_key"] = api_key
@@ -24,7 +24,7 @@ class OpenAI(BaseLLM):
             client_kwargs["max_retries"] = self.config.max_retries
         if self.config.timeout is not None:
             client_kwargs["timeout"] = self.config.timeout
-            
+
         self.sync_client = OpenAIClient(**client_kwargs)
         self.use_native_tools = True
 
@@ -51,21 +51,23 @@ class OpenAI(BaseLLM):
             "logit_bias",
             "timeout",
         }
-        
+
         params = {k: v for k, v in kwargs.items() if k in openai_params}
 
         if tools and use_native_tools:
-            params["tools"] = self._get_serialized_tools(tools, formatted_messages)
+            params["tools"] = self._get_serialized_tools(
+                tools, formatted_messages
+            )
 
         cleaned_messages = []
         for msg in formatted_messages:
             role = msg.get("role")
             content = msg.get("content")
-            
+
             cleaned = {"role": role}
             if content is not None:
                 cleaned["content"] = content
-                
+
             if role == "system":
                 if "name" in msg and msg["name"] is not None:
                     cleaned["name"] = msg["name"]
@@ -83,14 +85,14 @@ class OpenAI(BaseLLM):
                         if not tc_name and "function" in tc:
                             tc_name = tc["function"].get("name")
                             tc_args = tc["function"].get("arguments")
-                        
+
                         tc_cleaned = {
                             "id": tc.get("id"),
                             "type": "function",
                             "function": {
                                 "name": tc_name,
                                 "arguments": tc_args,
-                            }
+                            },
                         }
                         cleaned_tool_calls.append(tc_cleaned)
                     cleaned["tool_calls"] = cleaned_tool_calls
@@ -99,9 +101,7 @@ class OpenAI(BaseLLM):
             cleaned_messages.append(cleaned)
 
         response = self.sync_client.chat.completions.create(
-            model=self.id,
-            messages=cleaned_messages,
-            **params
+            model=self.id, messages=cleaned_messages, **params
         )
         choice = response.choices[0].message
 
@@ -127,4 +127,3 @@ class OpenAI(BaseLLM):
             input=texts, model=self.id
         )
         return [e.embedding for e in response.data]
-
