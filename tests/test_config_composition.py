@@ -5,7 +5,7 @@ from dingir.agents.llms.openai_driver import OpenAI
 
 
 class DummyLLM(BaseLLM):
-    def request(self, system, messages, tools):
+    def execute(self, formatted_messages, tools, **kwargs):
         return {"content": "dummy response"}
 
 

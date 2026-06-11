@@ -1,4 +1,5 @@
 import sys
+import inspect
 from types import ModuleType
 
 # Mock pytest
@@ -31,10 +32,10 @@ pytest_mock.raises = RaisesContext
 sys.modules["pytest"] = pytest_mock
 
 # Add src and root to sys.path
-sys.path.insert(0, "/home/ahmed/projects/dingir/src")
-sys.path.insert(0, "/home/ahmed/projects/dingir")
+sys.path.insert(0, "./src")
+sys.path.insert(0, ".")
 
-# Run the test functions
+# Run the test functions from test_config_composition
 from tests.test_config_composition import (
     test_explicit_args_tracking,
     test_config_merge_rightmost_precedence,
@@ -42,7 +43,6 @@ from tests.test_config_composition import (
     test_invalid_config_type_raises_error,
     test_driver_composite_config,
     test_openai_driver_parameter_conversion,
-    test_openai_compatible_driver,
 )
 
 print("Running test_explicit_args_tracking...")
@@ -63,7 +63,25 @@ test_driver_composite_config()
 print("Running test_openai_driver_parameter_conversion...")
 test_openai_driver_parameter_conversion()
 
-print("Running test_openai_compatible_driver...")
-test_openai_compatible_driver()
+# Run the test functions from test_all_drivers
+print("\n=== Running All Driver Tests ===")
+import tests.drivers.openai as t_openai
+import tests.drivers.gemini as t_gemini
+import tests.drivers.ollama as t_ollama
+import tests.drivers.huggingface as t_hf
+import tests.drivers.huggingface_local as t_hfl
 
-print("All tests passed successfully!")
+driver_modules = [t_openai, t_gemini, t_ollama, t_hf, t_hfl]
+
+for mod in driver_modules:
+    for name, obj in inspect.getmembers(mod):
+        if inspect.isclass(obj) and name.startswith("Test"):
+            print(f"Running tests in class {name}...")
+            instance = obj()
+            for m_name, m_obj in inspect.getmembers(instance):
+                if inspect.ismethod(m_obj) and m_name.startswith("test_"):
+                    print(f"  Running {m_name}...")
+                    m_obj()
+
+print("\nAll tests passed successfully!")
+
