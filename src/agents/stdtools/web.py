@@ -1,5 +1,6 @@
 import json
 import random
+import re
 import urllib.parse
 
 import requests
@@ -96,29 +97,65 @@ def web_search(query: str) -> str:
 
 
 def fetch_webpage(url: str) -> str:
-    """Fetches the text content of a webpage at the given URL, stripping all HTML markup, while preserving links (absolute URLs) for ease of traversal. Returns up to 4000 characters."""
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    """Fetches the content of a webpage, removes unwanted layout/invisible tags,
+    replaces images with their alt texts, strips tag attributes, and returns the cleaned text.
+    """
     try:
-        response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.text, "html.parser")
-            # Remove scripts and styles
-            for tag in soup(["script", "style"]):
-                tag.decompose()
-
-            # Format <a> tags to include their absolute href URLs
-            for a in soup.find_all("a", href=True):
-                href = a["href"].strip()
-                if href:
-                    absolute_href = urllib.parse.urljoin(url, href)
-                    text = a.get_text().strip()
-                    if text:
-                        a.replace_with(f" [{text}]({absolute_href}) ")
-                    else:
-                        a.replace_with(f" ({absolute_href}) ")
-
-            clean_text = soup.get_text(separator=" ", strip=True)
-            return clean_text[:4000]
-        return f"Webpage fetch failed with status code {response.status_code}."
+        response = requests.get(url, timeout=10)
+        if response.status_code != 200:
+            return f"Failed with status code {response.status_code}"
+        html_content = response.text
+    except requests.exceptions.RequestException as e:
+        return f"Network error: {str(e)}"
     except Exception as e:
-        return f"Webpage fetch encountered an error: {str(e)}"
+        return f"Error fetching webpage: {str(e)}"
+
+    try:
+        soup = BeautifulSoup(html_content, "html.parser")
+
+        # 1. Destructively remove invisible and layout-heavy elements
+        unwanted_tags = [
+            "script", "style", "noscript", "header", "footer",
+            "nav", "aside", "form", "button", "svg", "iframe"
+        ]
+        for tag in soup(unwanted_tags):
+            tag.decompose()
+
+        # 2. Extract image alt texts and insert them as inline text
+        for img in soup.find_all("img"):
+            if img.get("alt"):
+                img.replace_with(f" [Image: {img['alt']}] ")
+            else:
+                img.decompose()
+
+        # 3. Extract link URLs and append them next to the link text
+        for a_tag in soup.find_all("a"):
+            href = a_tag.get("href")
+            if href:
+                absolute_url = urllib.parse.urljoin(url, href)
+                text = a_tag.get_text().strip()
+                if text:
+                    a_tag.replace_with(f" {text} ({absolute_url}) ")
+                else:
+                    a_tag.replace_with(f" ({absolute_url}) ")
+            else:
+                a_tag.replace_with(a_tag.get_text())
+
+        # 4. Strip all attributes (ids, classes, styles) to minimize token weight
+        for tag in soup.find_all(True):
+            tag.attrs = {}
+
+        # 5. Extract text content with line breaks
+        text = soup.get_text(separator="\n")
+
+        # 6. Clean up structural whitespace and line breaks
+        text = re.sub(r"[ \t]+", " ", text)          # Collapse horizontal spaces
+        text = re.sub(r"\n\s*\n+", "\n\n", text)     # Collapse consecutive empty lines
+
+        return text.strip()
+    except Exception as e:
+        return f"Error processing webpage content: {str(e)}"
+
+
+
+

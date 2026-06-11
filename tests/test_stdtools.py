@@ -177,37 +177,44 @@ class TestWebSearch:
 
 class TestFetchWebpage:
     @patch("dingir.agents.stdtools.web.requests.get")
-    def test_strips_html_tags(self, mock_get):
+    def test_fetch_webpage_pipeline(self, mock_get):
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.text = (
-            "<html><body><p>Hello <b>world</b></p></body></html>"
+            "<html><head><style>body {color: red;}</style></head>"
+            "<body>"
+            "<header>Header Content</header>"
+            "<nav>Navigation</nav>"
+            "<p>Hello <b>world</b></p>"
+            '<a href="/about">About Us</a>'
+            '<img src="tree.jpg" alt="A nice tree">'
+            '<img src="empty.jpg">'
+            '<script>alert("xss")</script>'
+            "</body></html>"
         )
         mock_get.return_value = mock_response
-        result = fetch_webpage("http://example.com")
+        result = fetch_webpage("http://example.com/home")
+        
+        # Style and script elements are removed
+        assert "color: red;" not in result
+        assert "alert" not in result
+        
+        # Header and nav are removed
+        assert "Header Content" not in result
+        assert "Navigation" not in result
+        
+        # Paragraph text is present
         assert "Hello" in result
         assert "world" in result
-        assert "<b>" not in result
-
-    @patch("dingir.agents.stdtools.web.requests.get")
-    def test_strips_scripts_and_styles(self, mock_get):
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.text = '<html><script>alert("xss")</script><style>.x{}</style><body>Clean</body></html>'
-        mock_get.return_value = mock_response
-        result = fetch_webpage("http://example.com")
-        assert "Clean" in result
-        assert "alert" not in result
-        assert ".x{}" not in result
-
-    @patch("dingir.agents.stdtools.web.requests.get")
-    def test_caps_output_length(self, mock_get):
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.text = "<html><body>" + "A" * 10000 + "</body></html>"
-        mock_get.return_value = mock_response
-        result = fetch_webpage("http://example.com")
-        assert len(result) <= 4000
+        
+        # Link URL is preserved next to link text with resolved absolute path
+        assert "About Us (http://example.com/about)" in result
+        
+        # Image with alt is replaced, image without alt is decomposed
+        assert "[Image: A nice tree]" in result
+        
+        # Collapsed consecutive empty lines/spaces
+        assert "  " not in result
 
     @patch("dingir.agents.stdtools.web.requests.get")
     def test_handles_http_error(self, mock_get):
@@ -217,15 +224,5 @@ class TestFetchWebpage:
         result = fetch_webpage("http://example.com/missing")
         assert "404" in result
 
-    @patch("dingir.agents.stdtools.web.requests.get")
-    def test_preserves_links_as_absolute_urls(self, mock_get):
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.text = (
-            '<html><body>Go to <a href="/about">About Us</a> or '
-            '<a href="https://other.com/help">Help</a></body></html>'
-        )
-        mock_get.return_value = mock_response
-        result = fetch_webpage("http://example.com/home")
-        assert "[About Us](http://example.com/about)" in result
-        assert "[Help](https://other.com/help)" in result
+
+
