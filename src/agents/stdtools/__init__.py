@@ -13,6 +13,14 @@ from dingir.agents.stdtools.fs import (
 )
 from dingir.agents.stdtools.system import calculator, current_datetime
 from dingir.agents.stdtools.web import fetch_webpage, web_search
+from dingir.agents.stdtools.agent_ops import (
+    create_agent,
+    list_available_tools,
+    register_custom_tool,
+    get_subagent_log,
+    list_subagents,
+    unregister_tool,
+)
 
 __all__ = [
     "web_search",
@@ -30,4 +38,10 @@ __all__ = [
     "copy_path",
     "search_files",
     "find_paths",
+    "create_agent",
+    "list_available_tools",
+    "register_custom_tool",
+    "get_subagent_log",
+    "list_subagents",
+    "unregister_tool",
 ]
