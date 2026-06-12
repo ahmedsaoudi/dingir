@@ -2,22 +2,6 @@ import inspect
 import json
 from typing import Any, Dict, List, Optional
 
-from dingir.agents.stdtools.fs import (
-    copy_path,
-    delete_path,
-    edit_file,
-    find_paths,
-    get_cwd,
-    list_directory,
-    move_path,
-    read_file,
-    replace_lines,
-    search_files,
-    write_file,
-)
-from dingir.agents.stdtools.system import calculator, current_datetime
-from dingir.agents.stdtools.web import fetch_webpage, web_search
-
 
 def create_agent(
     instruction: str,
@@ -261,36 +245,17 @@ def unregister_tool(name: str) -> str:
     return f"ERROR: Tool '{name}' not found in the active tools list."
 
 
-# Define all standard tools, including the agent operations themselves
-_STANDARD_TOOLS = [
-    copy_path,
-    delete_path,
-    edit_file,
-    find_paths,
-    get_cwd,
-    list_directory,
-    move_path,
-    read_file,
-    replace_lines,
-    search_files,
-    write_file,
-    calculator,
-    current_datetime,
-    fetch_webpage,
-    web_search,
-    create_agent,
-    list_available_tools,
-    register_custom_tool,
-    get_subagent_log,
-    list_subagents,
-    unregister_tool,
-]
-
-
 def get_all_tools_map() -> Dict[str, Any]:
-    tools_map = {
-        t.__name__: t for t in _STANDARD_TOOLS if hasattr(t, "__name__")
-    }
+    from dingir.agents import stdtools
+
+    tools_map = {}
+    for name in getattr(stdtools, "__all__", []):
+        try:
+            tool_func = getattr(stdtools, name)
+            if callable(tool_func):
+                tools_map[name] = tool_func
+        except AttributeError:
+            pass
 
     from dingir.agents.guards import _active_agent
 
