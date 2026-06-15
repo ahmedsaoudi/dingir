@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Generator, List, Optional
 
 from dingir.agents.llms.base import BaseLLM
 from dingir.config import ModelConfig
@@ -187,6 +187,25 @@ class HuggingFaceLocal(BaseLLM):
             pass
 
         return {"content": cleaned_text.strip(), "tool_calls": tool_calls}
+
+    def execute_stream(
+        self,
+        formatted_messages: List[Dict[str, Any]],
+        tools: List[Any],
+        **kwargs: Any,
+    ) -> Generator[Dict[str, Any], None, None]:
+        """Streaming fallback for local models. Yields the full response as a single chunk
+        since local pipeline streaming with tool call parsing is not straightforward."""
+        result = self.execute(formatted_messages, tools, **kwargs)
+        content = result.get("content", "")
+        if content:
+            yield {"type": "content_delta", "content": content}
+        yield {
+            "type": "done",
+            "content": content,
+            "tool_calls": result.get("tool_calls"),
+            "reasoning_content": result.get("reasoning_content"),
+        }
 
     def _normalize_tool_call(self, data: Any) -> Optional[Dict[str, Any]]:
         """Normalise a parsed dict into the standard {id, name, arguments} format."""

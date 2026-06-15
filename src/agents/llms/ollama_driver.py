@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Generator, List, Optional
 
 import ollama
 from dingir.agents.llms.base import BaseLLM
@@ -63,3 +63,71 @@ class Ollama(BaseLLM):
             ]
 
         return {"content": message.get("content", ""), "tool_calls": tc_out}
+
+    def execute_stream(
+        self,
+        formatted_messages: List[Dict[str, Any]],
+        tools: List[Any],
+        **kwargs: Any,
+    ) -> Generator[Dict[str, Any], None, None]:
+
+        if not self.use_native_tools and tools:
+            formatted_messages = self._format_fallback_tools(formatted_messages)
+
+        options = {}
+        for k, v in kwargs.items():
+            if k == "max_tokens":
+                options["num_predict"] = v
+            elif k == "response_format":
+                pass
+            else:
+                options[k] = v
+
+        chat_kwargs = {
+            "model": self.id,
+            "messages": formatted_messages,
+            "options": options,
+            "stream": True,
+        }
+
+        if tools and self.use_native_tools:
+            chat_kwargs["tools"] = self._get_serialized_tools(tools, formatted_messages)
+
+        if "response_format" in kwargs and kwargs["response_format"]:
+            fmt = kwargs["response_format"]
+            if isinstance(fmt, dict) and fmt.get("type") == "json_object":
+                chat_kwargs["format"] = "json"
+            elif fmt == "json":
+                chat_kwargs["format"] = "json"
+
+        full_content = ""
+        tool_calls_raw: List[Dict[str, Any]] = []
+
+        for chunk in self.client.chat(**chat_kwargs):
+            message = chunk.get("message", {})
+
+            delta = message.get("content", "")
+            if delta:
+                full_content += delta
+                yield {"type": "content_delta", "content": delta}
+
+            if message.get("tool_calls"):
+                tool_calls_raw.extend(message["tool_calls"])
+
+        tc_out = None
+        if tool_calls_raw:
+            tc_out = [
+                {
+                    "id": "ollama_call",
+                    "name": tc.get("function", {}).get("name"),
+                    "arguments": tc.get("function", {}).get("arguments"),
+                }
+                for tc in tool_calls_raw
+            ]
+
+        yield {
+            "type": "done",
+            "content": full_content,
+            "tool_calls": tc_out,
+            "reasoning_content": None,
+        }

@@ -1,5 +1,5 @@
 import json
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Generator, List, Optional
 
 from dingir.agents.guards import GuardError
 from dingir.agents.log import Log
@@ -230,6 +230,147 @@ class Agent:
                 if cbs:
                     for cb in cbs:
                         cb(self)
+                break
+        except Exception as e:
+            if not getattr(e, "_agent_logged", False):
+                import traceback
+                self.log.record(
+                    "exception",
+                    {
+                        "exception_type": e.__class__.__name__,
+                        "message": str(e),
+                        "traceback": traceback.format_exc(),
+                    },
+                    agent_name=self.__name__,
+                )
+                try:
+                    e._agent_logged = True
+                except AttributeError:
+                    pass
+            raise
+
+    def stream(
+        self,
+        message: Optional[str] = None,
+        on_step_callback: Optional[Callable[["Agent"], None] | List[Callable[["Agent"], None]]] = None,
+    ) -> Generator[Dict[str, Any], None, None]:
+        """Streaming variant of respond(). Yields delta dicts as the model generates.
+
+        Runs the same agentic loop as respond() (guards, tool calls, memory, logging)
+        but uses model.request_stream() so content and reasoning tokens can be
+        surfaced to the caller incrementally.
+
+        Chunk protocol:
+          {"type": "content_delta", "content": "..."}      — partial text token
+          {"type": "reasoning_delta", "content": "..."}     — partial reasoning token
+          {"type": "tool_call", "name": "...", "arguments": "..."}  — a tool was called
+          {"type": "tool_result", "name": "...", "output": "..."}   — tool result
+          {"type": "done", "content": "full final text"}    — final assembled response
+        """
+        try:
+            # Combine default guards and runtime callbacks
+            cbs = list(self.guards)
+            if on_step_callback:
+                if isinstance(on_step_callback, (list, tuple)):
+                    cbs.extend(on_step_callback)
+                else:
+                    cbs.append(on_step_callback)
+
+            self.log.guards = cbs
+
+            if message:
+                self.memory.add(role="user", content=message)
+                self.log.record(
+                    "message",
+                    {"role": "user", "content": message},
+                    agent_name=self.__name__,
+                )
+            while True:
+                # Execute step callbacks at the start of the iteration
+                if cbs:
+                    for cb in cbs:
+                        cb(self)
+
+                serializable_messages = self.memory.to_messages()
+
+                # Stream the model response, accumulating the final result
+                result = None
+                for chunk in self.model.request_stream(
+                    self.memory.system, serializable_messages, self.tools
+                ):
+                    if chunk["type"] in ("content_delta", "reasoning_delta"):
+                        yield chunk
+                    elif chunk["type"] == "done":
+                        result = chunk
+
+                if result is None:
+                    # Shouldn't happen, but guard against it
+                    result = {"content": "", "tool_calls": None, "reasoning_content": None}
+
+                reasoning = result.get("reasoning_content")
+
+                if result.get("tool_calls"):
+                    self.memory.add(
+                        role="assistant",
+                        content=result["content"],
+                        tool_calls=result["tool_calls"],
+                    )
+                    log_content = {
+                        "role": "assistant",
+                        "content": result["content"],
+                        "tool_calls": result["tool_calls"],
+                    }
+                    if reasoning:
+                        log_content["reasoning_content"] = reasoning
+                    self.log.record(
+                        "message",
+                        log_content,
+                        agent_name=self.__name__,
+                    )
+                    if cbs:
+                        for cb in cbs:
+                            cb(self)
+                    for tc in result["tool_calls"]:
+                        self.log.record(
+                            "tool_call",
+                            {"name": tc["name"], "arguments": tc["arguments"]},
+                            agent_name=self.__name__,
+                        )
+                        yield {"type": "tool_call", "name": tc["name"], "arguments": tc["arguments"]}
+                        output = self._execute_tool_sync(
+                            tc["name"], tc["arguments"]
+                        )
+                        self.memory.add(
+                            role="tool",
+                            content=output,
+                            tool_call_id=tc.get("id", "call_idx"),
+                            name=tc["name"],
+                        )
+                        self.log.record(
+                            "tool_result",
+                            {
+                                "name": tc["name"],
+                                "tool_call_id": tc.get("id", "call_idx"),
+                                "output": output,
+                            },
+                            agent_name=self.__name__,
+                        )
+                        yield {"type": "tool_result", "name": tc["name"], "output": output}
+                    continue
+
+                self.memory.add(role="assistant", content=result["content"])
+                log_content = {"role": "assistant", "content": result["content"]}
+                if reasoning:
+                    log_content["reasoning_content"] = reasoning
+                self.log.record(
+                    "message",
+                    log_content,
+                    agent_name=self.__name__,
+                )
+                if cbs:
+                    for cb in cbs:
+                        cb(self)
+                yield {"type": "done", "content": result["content"]}
                 break
         except Exception as e:
             if not getattr(e, "_agent_logged", False):

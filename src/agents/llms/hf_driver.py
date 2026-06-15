@@ -1,5 +1,5 @@
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Generator, List, Optional
 
 from dingir.agents.llms.base import BaseLLM
 from dingir.config import ModelConfig
@@ -58,6 +58,70 @@ class HuggingFace(BaseLLM):
         return {
             "content": choice.content or "",
             "tool_calls": tc_out,
+        }
+
+    def execute_stream(
+        self,
+        formatted_messages: List[Dict[str, Any]],
+        tools: List[Any],
+        **kwargs: Any,
+    ) -> Generator[Dict[str, Any], None, None]:
+        if not self.use_native_tools and tools:
+            formatted_messages = self._format_fallback_tools(formatted_messages)
+
+        if "temperature" in kwargs and kwargs["temperature"] <= 0:
+            kwargs["temperature"] = 0.01
+
+        chat_kwargs = {
+            "messages": formatted_messages,
+            "stream": True,
+            **kwargs
+        }
+
+        if tools and self.use_native_tools:
+            chat_kwargs["tools"] = self._get_serialized_tools(tools, formatted_messages)
+
+        stream = self.client.chat_completion(**chat_kwargs)
+
+        full_content = ""
+        tool_calls_accum: Dict[int, Dict[str, Any]] = {}
+
+        for chunk in stream:
+            delta = chunk.choices[0].delta
+
+            if delta.content:
+                full_content += delta.content
+                yield {"type": "content_delta", "content": delta.content}
+
+            if delta.tool_calls:
+                for tc_delta in delta.tool_calls:
+                    idx = tc_delta.index
+                    if idx not in tool_calls_accum:
+                        tool_calls_accum[idx] = {
+                            "id": "",
+                            "name": "",
+                            "arguments": "",
+                        }
+                    if getattr(tc_delta, "id", None):
+                        tool_calls_accum[idx]["id"] = tc_delta.id
+                    if getattr(tc_delta, "function", None):
+                        if getattr(tc_delta.function, "name", None):
+                            tool_calls_accum[idx]["name"] += tc_delta.function.name
+                        if getattr(tc_delta.function, "arguments", None):
+                            tool_calls_accum[idx]["arguments"] += tc_delta.function.arguments
+
+        tc_out = None
+        if tool_calls_accum:
+            tc_out = [
+                tool_calls_accum[idx]
+                for idx in sorted(tool_calls_accum.keys())
+            ]
+
+        yield {
+            "type": "done",
+            "content": full_content,
+            "tool_calls": tc_out,
+            "reasoning_content": None,
         }
 
     def embed(self, texts: List[str]) -> List[List[float]]:

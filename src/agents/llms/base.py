@@ -2,6 +2,7 @@ import re
 import json
 import inspect
 from abc import ABC, abstractmethod
+from typing import Generator
 from typing import Any, Dict, List, Optional
 
 from dingir.config import ModelConfig
@@ -88,6 +89,52 @@ class BaseLLM(ABC):
                 
         return response
 
+    def request_stream(
+        self,
+        system: Optional[str],
+        messages: List[Dict[str, Any]],
+        tools: List[Any],
+    ) -> Generator[Dict[str, Any], None, None]:
+        """
+        Streaming variant of request(). Yields delta dicts from the driver,
+        applying the same pre-processing and post-processing as request().
+
+        Chunk protocol:
+          {"type": "content_delta", "content": "..."}
+          {"type": "reasoning_delta", "content": "..."}
+          {"type": "done", "content": "...", "tool_calls": ..., "reasoning_content": ...}
+        """
+        use_native_tools = getattr(self, "use_native_tools", True)
+
+        if tools and not use_native_tools:
+            system = self._format_fallback_prompt(system, tools, messages)
+
+        formatted_messages = self._format_messages(system, messages)
+        kwargs = self._map_config()
+
+        try:
+            stream = self.execute_stream(formatted_messages, tools, **kwargs)
+        except Exception as e:
+            if tools and use_native_tools and self._is_tool_unsupported_error(e):
+                self.use_native_tools = False
+                system = self._format_fallback_prompt(system, tools, messages)
+                formatted_messages = self._format_messages(system, messages)
+                stream = self.execute_stream(formatted_messages, tools, **kwargs)
+            else:
+                raise e
+
+        for chunk in stream:
+            if chunk["type"] == "done":
+                # Post-process reasoning extraction on the final assembled result
+                content = chunk.get("content", "")
+                reasoning = chunk.get("reasoning_content")
+                if not reasoning and content:
+                    parsed_content, parsed_reasoning = self._parse_reasoning(content)
+                    if parsed_reasoning:
+                        chunk["content"] = parsed_content
+                        chunk["reasoning_content"] = parsed_reasoning
+            yield chunk
+
     def _is_tool_unsupported_error(self, e: Exception) -> bool:
         """Helper to check if an exception was caused by a lack of tool calling support."""
         err_msg = str(e).lower()
@@ -125,6 +172,29 @@ class BaseLLM(ABC):
     ) -> Dict[str, Any]:
         """Child classes must implement the API call and response extraction."""
         pass
+
+    def execute_stream(
+        self,
+        formatted_messages: List[Dict[str, Any]],
+        tools: List[Any],
+        **kwargs: Any,
+    ) -> Generator[Dict[str, Any], None, None]:
+        """Streaming variant of execute(). Yields delta dicts.
+
+        Child classes should override this to use their provider's native
+        streaming API. The default implementation falls back to execute()
+        and yields the full response as a single chunk.
+        """
+        result = self.execute(formatted_messages, tools, **kwargs)
+        content = result.get("content", "")
+        if content:
+            yield {"type": "content_delta", "content": content}
+        yield {
+            "type": "done",
+            "content": content,
+            "tool_calls": result.get("tool_calls"),
+            "reasoning_content": result.get("reasoning_content"),
+        }
 
     def _format_messages(
         self, system: Optional[str], messages: List[Dict[str, Any]]

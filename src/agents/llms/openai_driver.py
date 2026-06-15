@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Generator, List, Optional
 
 from dingir.agents.llms.base import BaseLLM
 from dingir.config import ModelConfig
@@ -120,6 +120,136 @@ class OpenAI(BaseLLM):
             "content": choice.content or "",
             "tool_calls": tc_out,
             "reasoning_content": getattr(choice, "reasoning_content", None),
+        }
+
+    def execute_stream(
+        self,
+        formatted_messages: List[Dict[str, Any]],
+        tools: List[Any],
+        **kwargs: Any,
+    ) -> Generator[Dict[str, Any], None, None]:
+        use_native_tools = getattr(self, "use_native_tools", True)
+        if not use_native_tools and tools:
+            formatted_messages = self._format_fallback_tools(formatted_messages)
+
+        # Filter standard OpenAI API parameters
+        openai_params = {
+            "temperature",
+            "max_tokens",
+            "top_p",
+            "stop",
+            "presence_penalty",
+            "frequency_penalty",
+            "seed",
+            "response_format",
+            "logit_bias",
+            "timeout",
+        }
+
+        params = {k: v for k, v in kwargs.items() if k in openai_params}
+
+        if tools and use_native_tools:
+            params["tools"] = self._get_serialized_tools(
+                tools, formatted_messages
+            )
+
+        cleaned_messages = []
+        for msg in formatted_messages:
+            role = msg.get("role")
+            content = msg.get("content")
+
+            cleaned = {"role": role}
+            if content is not None:
+                cleaned["content"] = content
+
+            if role == "system":
+                if "name" in msg and msg["name"] is not None:
+                    cleaned["name"] = msg["name"]
+            elif role == "user":
+                if "name" in msg and msg["name"] is not None:
+                    cleaned["name"] = msg["name"]
+            elif role == "assistant":
+                if "name" in msg and msg["name"] is not None:
+                    cleaned["name"] = msg["name"]
+                if "tool_calls" in msg and msg["tool_calls"] is not None:
+                    cleaned_tool_calls = []
+                    for tc in msg["tool_calls"]:
+                        tc_name = tc.get("name")
+                        tc_args = tc.get("arguments")
+                        if not tc_name and "function" in tc:
+                            tc_name = tc["function"].get("name")
+                            tc_args = tc["function"].get("arguments")
+
+                        tc_cleaned = {
+                            "id": tc.get("id"),
+                            "type": "function",
+                            "function": {
+                                "name": tc_name,
+                                "arguments": tc_args,
+                            },
+                        }
+                        cleaned_tool_calls.append(tc_cleaned)
+                    cleaned["tool_calls"] = cleaned_tool_calls
+            elif role == "tool":
+                cleaned["tool_call_id"] = msg.get("tool_call_id")
+            cleaned_messages.append(cleaned)
+
+        stream = self.sync_client.chat.completions.create(
+            model=self.id, messages=cleaned_messages, stream=True, **params
+        )
+
+        full_content = ""
+        full_reasoning = ""
+        tool_calls_by_index: Dict[int, Dict[str, Any]] = {}
+
+        for chunk in stream:
+            if not chunk.choices:
+                continue
+
+            delta = chunk.choices[0].delta
+
+            # Content delta
+            if delta.content:
+                full_content += delta.content
+                yield {"type": "content_delta", "content": delta.content}
+
+            # Reasoning delta (o-series models)
+            reasoning = getattr(delta, "reasoning_content", None)
+            if reasoning:
+                full_reasoning += reasoning
+                yield {"type": "reasoning_delta", "content": reasoning}
+
+            # Tool call deltas
+            if delta.tool_calls:
+                for tc_delta in delta.tool_calls:
+                    idx = tc_delta.index
+                    if idx not in tool_calls_by_index:
+                        tool_calls_by_index[idx] = {
+                            "id": "",
+                            "name": "",
+                            "arguments": "",
+                        }
+                    tc_entry = tool_calls_by_index[idx]
+                    if tc_delta.id:
+                        tc_entry["id"] = tc_delta.id
+                    if tc_delta.function:
+                        if tc_delta.function.name:
+                            tc_entry["name"] += tc_delta.function.name
+                        if tc_delta.function.arguments:
+                            tc_entry["arguments"] += tc_delta.function.arguments
+
+        tc_out = None
+        if tool_calls_by_index:
+            tc_out = [
+                tool_calls_by_index[i]
+                for i in sorted(tool_calls_by_index.keys())
+            ]
+
+        yield {
+            "type": "done",
+            "content": full_content,
+            "tool_calls": tc_out,
+            "reasoning_content": full_reasoning or None,
         }
 
     def embed(self, texts: List[str]) -> List[List[float]]:
