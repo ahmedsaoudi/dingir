@@ -100,6 +100,39 @@ class HuggingFaceLocal(BaseLLM):
         if tools and self.use_native_tools:
             template_kwargs["tools"] = self._get_serialized_tools(tools, formatted_messages)
 
+        # Apply the model's native chat template
+        template_kwargs = {
+            "conversation": formatted_messages,
+            "tokenize": False,
+            "add_generation_prompt": True
+        }
+        
+        if tools and self.use_native_tools:
+            raw_tools = self._get_serialized_tools(tools, formatted_messages)
+            
+            # --- FIX FOR GEMMA / HF MODEL COMPATIBILITY ---
+            hf_formatted_tools = []
+            for tool in raw_tools:
+                # If dingir already formatted it as an OpenAI/HF dict, keep it
+                if isinstance(tool, dict) and "function" in tool:
+                    hf_formatted_tools.append(tool)
+                # If it's a raw tool dictionary missing the outer layer wrapper
+                elif isinstance(tool, dict):
+                    hf_formatted_tools.append({
+                        "type": "function",
+                        "function": {
+                            "name": tool.get("name"),
+                            "description": tool.get("description", ""),
+                            "parameters": tool.get("parameters", tool.get("arguments", {"type": "object", "properties": {}}))
+                        }
+                    })
+                else:
+                    # Fallback case if it's an unparsed object
+                    hf_formatted_tools.append(tool)
+            
+            template_kwargs["tools"] = hf_formatted_tools
+            # ----------------------------------------------
+
         prompt = self._pipeline.tokenizer.apply_chat_template(**template_kwargs)
 
         pipeline_kwargs = {
@@ -142,6 +175,7 @@ class HuggingFaceLocal(BaseLLM):
         cleaned_text = generated_text
         try:
             parsed = self._pipeline.tokenizer.parse_response(generated_text)
+            print(f"{parsed=}")
             cleaned_text = parsed.get("content") or generated_text
             raw_calls = parsed.get("tool_calls")
             if raw_calls:
