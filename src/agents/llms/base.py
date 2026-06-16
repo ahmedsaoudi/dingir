@@ -622,3 +622,44 @@ class BaseLLM(ABC):
             "responses in your text content."
         )
         return f"{system or ''}{tools_instruction_block}"
+
+    def _safe_serialize_payload(self, obj: Any) -> Any:
+        if isinstance(obj, (str, int, float, bool, type(None))):
+            return obj
+        if isinstance(obj, (list, tuple, set)):
+            return [self._safe_serialize_payload(x) for x in obj]
+        if isinstance(obj, dict):
+            return {str(k): self._safe_serialize_payload(v) for k, v in obj.items()}
+        if hasattr(obj, "model_dump") and callable(obj.model_dump):
+            try:
+                return self._safe_serialize_payload(obj.model_dump())
+            except Exception:
+                pass
+        if hasattr(obj, "dict") and callable(obj.dict):
+            try:
+                return self._safe_serialize_payload(obj.dict())
+            except Exception:
+                pass
+        if hasattr(obj, "__dict__"):
+            try:
+                return self._safe_serialize_payload({k: v for k, v in obj.__dict__.items() if not k.startswith("_")})
+            except Exception:
+                pass
+        return str(obj)
+
+    def _log_raw_api_call(self, request_payload: Any, response_payload: Any) -> None:
+        from dingir.agents.guards import _active_agent
+        agent = _active_agent.get()
+        if agent and hasattr(agent, "log") and agent.log is not None:
+            safe_req = self._safe_serialize_payload(request_payload)
+            safe_resp = self._safe_serialize_payload(response_payload)
+            agent.log.record(
+                "raw_api_call",
+                content={
+                    "driver": self.__class__.__name__,
+                    "model_id": self.id,
+                    "request": safe_req,
+                    "response": safe_resp,
+                },
+                agent_name=agent.__name__,
+            )

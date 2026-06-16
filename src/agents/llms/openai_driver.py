@@ -100,9 +100,15 @@ class OpenAI(BaseLLM):
                 cleaned["tool_call_id"] = msg.get("tool_call_id")
             cleaned_messages.append(cleaned)
 
+        raw_request = {
+            "model": self.id,
+            "messages": cleaned_messages,
+            **params
+        }
         response = self.sync_client.chat.completions.create(
             model=self.id, messages=cleaned_messages, **params
         )
+        self._log_raw_api_call(raw_request, response)
         choice = response.choices[0].message
 
         tc_out = None
@@ -244,6 +250,19 @@ class OpenAI(BaseLLM):
                 tool_calls_by_index[i]
                 for i in sorted(tool_calls_by_index.keys())
             ]
+
+        raw_request = {
+            "model": self.id,
+            "messages": cleaned_messages,
+            "stream": True,
+            **params
+        }
+        raw_response = {
+            "content": full_content,
+            "tool_calls": tc_out,
+            "reasoning_content": full_reasoning or None,
+        }
+        self._log_raw_api_call(raw_request, raw_response)
 
         yield {
             "type": "done",

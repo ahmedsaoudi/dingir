@@ -105,9 +105,31 @@ class Guard:
                         pass
                 if isinstance(tc_args, dict):
                     tool_name = tc.get("name", "")
+                    if hasattr(agent, "record_guard_encounter"):
+                        agent.record_guard_encounter(
+                            self,
+                            status="started",
+                            tool_name=tool_name,
+                            arguments=tc_args,
+                        )
                     try:
                         self.check_tool_args(tool_name, tc_args)
+                        if hasattr(agent, "record_guard_encounter"):
+                            agent.record_guard_encounter(
+                                self,
+                                status="passed",
+                                tool_name=tool_name,
+                                arguments=tc_args,
+                            )
                     except GuardError as e:
+                        if hasattr(agent, "record_guard_encounter"):
+                            agent.record_guard_encounter(
+                                self,
+                                status="failed",
+                                tool_name=tool_name,
+                                arguments=tc_args,
+                                error=str(e),
+                            )
                         if self.log and not getattr(
                             e, "_guard_logged", False
                         ):
@@ -146,9 +168,32 @@ class Guard:
             sig = inspect.signature(func)
             bound = sig.bind(*args, **kwargs)
             bound.apply_defaults()
+            agent = _active_agent.get()
+            if agent and hasattr(agent, "record_guard_encounter"):
+                agent.record_guard_encounter(
+                    self,
+                    status="started",
+                    tool_name=func.__name__,
+                    arguments=bound.arguments,
+                )
             try:
                 self.check_tool_args(func.__name__, bound.arguments)
+                if agent and hasattr(agent, "record_guard_encounter"):
+                    agent.record_guard_encounter(
+                        self,
+                        status="passed",
+                        tool_name=func.__name__,
+                        arguments=bound.arguments,
+                    )
             except GuardError as e:
+                if agent and hasattr(agent, "record_guard_encounter"):
+                    agent.record_guard_encounter(
+                        self,
+                        status="failed",
+                        tool_name=func.__name__,
+                        arguments=bound.arguments,
+                        error=str(e),
+                    )
                 if self.log and not getattr(e, "_guard_logged", False):
                     log_guard_trigger(
                         self,
@@ -177,9 +222,16 @@ class Guard:
         """
         # Step callback mode: called with an Agent instance
         if func_or_agent is not None and hasattr(func_or_agent, "memory"):
+            agent = func_or_agent
+            if hasattr(agent, "record_guard_encounter"):
+                agent.record_guard_encounter(self, status="started")
             try:
                 self.check_step(func_or_agent)
+                if hasattr(agent, "record_guard_encounter"):
+                    agent.record_guard_encounter(self, status="passed")
             except GuardError as e:
+                if hasattr(agent, "record_guard_encounter"):
+                    agent.record_guard_encounter(self, status="failed", error=str(e))
                 if self.log and not getattr(e, "_guard_logged", False):
                     log_guard_trigger(
                         self,
@@ -197,9 +249,16 @@ class Guard:
 
         # Step callback with no agent context
         if func_or_agent is None:
+            agent = _active_agent.get()
+            if agent and hasattr(agent, "record_guard_encounter"):
+                agent.record_guard_encounter(self, status="started")
             try:
                 self.check_step(None)
+                if agent and hasattr(agent, "record_guard_encounter"):
+                    agent.record_guard_encounter(self, status="passed")
             except GuardError as e:
+                if agent and hasattr(agent, "record_guard_encounter"):
+                    agent.record_guard_encounter(self, status="failed", error=str(e))
                 if self.log and not getattr(e, "_guard_logged", False):
                     log_guard_trigger(self, str(e), status="failed")
                     e._guard_logged = True  # type: ignore[attr-defined]

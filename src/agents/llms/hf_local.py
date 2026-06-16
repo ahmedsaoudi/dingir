@@ -154,6 +154,10 @@ class HuggingFaceLocal(BaseLLM):
 
             torch.manual_seed(kwargs["seed"])
 
+        raw_request = {
+            "prompt": prompt,
+            "pipeline_kwargs": pipeline_kwargs,
+        }
         outputs = self._pipeline(prompt, **pipeline_kwargs)
 
         # Extract only the newly generated token content substring
@@ -175,6 +179,15 @@ class HuggingFaceLocal(BaseLLM):
                 tool_calls = [tc for tc in tool_calls if tc is not None] or None
         except Exception:
             pass
+
+        raw_response = {
+            "generated_text": generated_text,
+            "parsed": {
+                "content": cleaned_text.strip(),
+                "tool_calls": tool_calls,
+            }
+        }
+        self._log_raw_api_call(raw_request, raw_response)
 
         return {"content": cleaned_text.strip(), "tool_calls": tool_calls}
 

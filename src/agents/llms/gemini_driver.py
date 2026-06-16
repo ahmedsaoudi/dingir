@@ -70,9 +70,15 @@ class Gemini(BaseLLM):
                 )
             ]
 
+        raw_request = {
+            "model": self.id,
+            "contents": contents,
+            "config": gen_config,
+        }
         response = self.client.models.generate_content(
             model=self.id, contents=contents, config=gen_config
         )
+        self._log_raw_api_call(raw_request, response)
         tool_calls = (
             [
                 {"id": "gemini_call", "name": fc.name, "arguments": fc.args}
@@ -158,6 +164,19 @@ class Gemini(BaseLLM):
                     {"id": "gemini_call", "name": fc.name, "arguments": fc.args}
                     for fc in chunk.function_calls
                 ]
+
+        raw_request = {
+            "model": self.id,
+            "contents": contents,
+            "config": gen_config,
+            "stream": True,
+        }
+        raw_response = {
+            "content": full_content,
+            "tool_calls": tool_calls,
+            "reasoning_content": None,
+        }
+        self._log_raw_api_call(raw_request, raw_response)
 
         yield {
             "type": "done",

@@ -40,7 +40,12 @@ class HuggingFace(BaseLLM):
         if tools and self.use_native_tools:
             chat_kwargs["tools"] = self._get_serialized_tools(tools, formatted_messages)
 
+        raw_request = {
+            "model": self.id,
+            **chat_kwargs
+        }
         response = self.client.chat_completion(**chat_kwargs)
+        self._log_raw_api_call(raw_request, response)
 
         choice = response.choices[0].message
         
@@ -116,6 +121,17 @@ class HuggingFace(BaseLLM):
                 tool_calls_accum[idx]
                 for idx in sorted(tool_calls_accum.keys())
             ]
+
+        raw_request = {
+            "model": self.id,
+            **chat_kwargs
+        }
+        raw_response = {
+            "content": full_content,
+            "tool_calls": tc_out,
+            "reasoning_content": None,
+        }
+        self._log_raw_api_call(raw_request, raw_response)
 
         yield {
             "type": "done",

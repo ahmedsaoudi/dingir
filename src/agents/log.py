@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterator, List, Optional
 
 
-ENTRY_TYPES = {"config", "message", "tool_call", "tool_result", "subagent_log", "guard_trigger", "exception", "error"}
+ENTRY_TYPES = {"config", "message", "tool_call", "tool_result", "subagent_log", "guard_trigger", "exception", "error", "raw_api_call"}
 
 
 def _serialize_guard(g: Any) -> Dict[str, Any]:
@@ -511,6 +511,28 @@ def _format_log(
 
             elif e_type in ("exception", "error"):
                 lines.append(f"{indent}  [{e_timestamp}] [{e_type.upper()}]: {e_content}")
+
+            elif e_type == "raw_api_call" and isinstance(e_content, dict):
+                driver = e_content.get("driver", "Unknown")
+                model_id = e_content.get("model_id", "Unknown")
+                lines.append(f"{indent}  [{e_timestamp}] [RAW API CALL] via {driver} ({model_id}):")
+                
+                req = e_content.get("request")
+                resp = e_content.get("response")
+                import json
+                
+                def safe_pretty_format(data: Any) -> str:
+                    try:
+                        return json.dumps(data, indent=2, ensure_ascii=False)
+                    except Exception:
+                        return str(data)
+
+                if req is not None:
+                    lines.append(f"{indent}    Request:")
+                    lines.append(_indent_text(safe_pretty_format(req), indent_level + 3))
+                if resp is not None:
+                    lines.append(f"{indent}    Response:")
+                    lines.append(_indent_text(safe_pretty_format(resp), indent_level + 3))
 
             else:
                 content_str = str(e_content)

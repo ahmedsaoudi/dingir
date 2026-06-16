@@ -48,7 +48,9 @@ class Ollama(BaseLLM):
             elif fmt == "json":
                 chat_kwargs["format"] = "json"
 
+        raw_request = dict(chat_kwargs)
         response = self.client.chat(**chat_kwargs)
+        self._log_raw_api_call(raw_request, response)
         message = response.get("message", {})
 
         tc_out = None
@@ -124,6 +126,14 @@ class Ollama(BaseLLM):
                 }
                 for tc in tool_calls_raw
             ]
+
+        raw_request = dict(chat_kwargs)
+        raw_response = {
+            "content": full_content,
+            "tool_calls": tc_out,
+            "reasoning_content": None,
+        }
+        self._log_raw_api_call(raw_request, raw_response)
 
         yield {
             "type": "done",
