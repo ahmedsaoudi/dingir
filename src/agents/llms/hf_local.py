@@ -41,9 +41,7 @@ class HuggingFaceLocal(BaseLLM):
                 "text-generation",
                 model=self.id,
                 device_map="auto" if device == "cuda" else None,
-                torch_dtype=torch.float16
-                if device == "cuda"
-                else torch.float32,
+                torch_dtype="auto",
                 token=self.api_key,
             )
         elif self.task == "feature-extraction":
