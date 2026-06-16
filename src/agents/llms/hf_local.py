@@ -97,15 +97,6 @@ class HuggingFaceLocal(BaseLLM):
             "tokenize": False,
             "add_generation_prompt": True
         }
-        if tools and self.use_native_tools:
-            template_kwargs["tools"] = self._get_serialized_tools(tools, formatted_messages)
-
-        # Apply the model's native chat template
-        template_kwargs = {
-            "conversation": formatted_messages,
-            "tokenize": False,
-            "add_generation_prompt": True
-        }
         
         if tools and self.use_native_tools:
             raw_tools = self._get_serialized_tools(tools, formatted_messages)
@@ -175,7 +166,6 @@ class HuggingFaceLocal(BaseLLM):
         cleaned_text = generated_text
         try:
             parsed = self._pipeline.tokenizer.parse_response(generated_text)
-            print(f"{parsed=}")
             cleaned_text = parsed.get("content") or generated_text
             raw_calls = parsed.get("tool_calls")
             if raw_calls:
@@ -207,33 +197,6 @@ class HuggingFaceLocal(BaseLLM):
             "reasoning_content": result.get("reasoning_content"),
         }
 
-    def _normalize_tool_call(self, data: Any) -> Optional[Dict[str, Any]]:
-        """Normalise a parsed dict into the standard {id, name, arguments} format."""
-        if not isinstance(data, dict):
-            return None
-        name = data.get("name")
-        if not name:
-            # Some models nest under "function"
-            func = data.get("function", {})
-            name = func.get("name")
-            arguments = func.get("arguments")
-        else:
-            arguments = data.get("arguments", data.get("parameters", {}))
-
-        if not name:
-            return None
-
-        # Ensure arguments is a JSON string (matches OpenAI/HF driver format)
-        if isinstance(arguments, dict):
-            arguments = json.dumps(arguments)
-        elif arguments is None:
-            arguments = "{}"
-
-        return {
-            "id": data.get("id", "hf_local_call"),
-            "name": name,
-            "arguments": arguments,
-        }
 
     def embed(self, texts: List[str]) -> List[List[float]]:
         self._lazy_load()

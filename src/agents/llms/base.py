@@ -86,7 +86,18 @@ class BaseLLM(ABC):
             if parsed_reasoning:
                 response["content"] = parsed_content
                 response["reasoning_content"] = parsed_reasoning
-                
+
+        # [POST-PROCESSING]: Extract tool calls from text when the driver
+        # returned none. This catches models that emit tool calls as text
+        # (Hermes XML, JSON blocks, etc.) regardless of which driver is used.
+        if tools and not response.get("tool_calls"):
+            content = response.get("content", "")
+            if content:
+                parsed_calls, cleaned = self._parse_tool_calls_from_text(content)
+                if parsed_calls:
+                    response["tool_calls"] = parsed_calls
+                    response["content"] = cleaned
+
         return response
 
     def request_stream(
@@ -133,6 +144,14 @@ class BaseLLM(ABC):
                     if parsed_reasoning:
                         chunk["content"] = parsed_content
                         chunk["reasoning_content"] = parsed_reasoning
+                # Post-process tool-call extraction from text
+                if tools and not chunk.get("tool_calls"):
+                    stream_content = chunk.get("content", "")
+                    if stream_content:
+                        parsed_calls, cleaned = self._parse_tool_calls_from_text(stream_content)
+                        if parsed_calls:
+                            chunk["tool_calls"] = parsed_calls
+                            chunk["content"] = cleaned
             yield chunk
 
     def _is_tool_unsupported_error(self, e: Exception) -> bool:
@@ -263,6 +282,157 @@ class BaseLLM(ABC):
             ).strip()
             return cleaned_content, reasoning
         return content, None
+
+    def _parse_tool_calls_from_text(
+        self, content: str
+    ) -> tuple[list[dict[str, Any]], str]:
+        """Extract tool calls embedded as text in the model's response.
+
+        This is the universal fallback for models that emit tool calls as text
+        instead of through the API's native tool-calling mechanism.  It runs as
+        post-processing in ``request()`` / ``request_stream()`` so **every
+        driver** benefits automatically.
+
+        Supported formats (tried in order):
+
+        1. **Hermes / Qwen XML** – ``<tool_call>`` blocks containing either
+           Qwen-style ``<function=…><parameter=…>`` tags *or* a JSON body.
+        2. **JSON code fences** – tool-call dicts inside ````json … ```` or
+           ````tool_call … ```` Markdown fences.
+        3. **Bare JSON objects** – a top-level ``{"name": …, "arguments": …}``
+           dict (or ``{"function": {"name": …}}`` wrapper).
+
+        Returns:
+            (tool_calls, cleaned_content) where *tool_calls* is a list of
+            normalised ``{id, name, arguments}`` dicts (or an empty list if
+            nothing was found) and *cleaned_content* is the original text with
+            the matched regions stripped out.
+        """
+        tool_calls: list[dict[str, Any]] = []
+        cleaned = content
+
+        # ── 1. Hermes / Qwen  <tool_call> blocks ──────────────────────────
+        tc_blocks = re.findall(
+            r"<tool_call>\s*(.*?)\s*</tool_call>", content, re.DOTALL
+        )
+        if tc_blocks:
+            for block in tc_blocks:
+                parsed = self._parse_single_tool_block(block)
+                if parsed:
+                    tool_calls.append(parsed)
+            if tool_calls:
+                cleaned = re.sub(
+                    r"<tool_call>.*?</tool_call>",
+                    "",
+                    cleaned,
+                    flags=re.DOTALL,
+                ).strip()
+                return tool_calls, cleaned
+
+        # ── 2. Markdown JSON / tool_call code fences ──────────────────────
+        fence_blocks = re.findall(
+            r"```(?:json|tool_call)\s*\n(.*?)```", content, re.DOTALL
+        )
+        for block in fence_blocks:
+            parsed = self._parse_single_tool_block(block)
+            if parsed:
+                tool_calls.append(parsed)
+        if tool_calls:
+            cleaned = re.sub(
+                r"```(?:json|tool_call)\s*\n.*?```",
+                "",
+                cleaned,
+                flags=re.DOTALL,
+            ).strip()
+            return tool_calls, cleaned
+
+        # ── 3. Bare JSON object with name + arguments ─────────────────────
+        bare = re.search(
+            r'\{\s*"(?:name|function)"\s*:', content, re.DOTALL
+        )
+        if bare:
+            # Find the matching closing brace
+            start = bare.start()
+            depth = 0
+            end = start
+            for i, ch in enumerate(content[start:], start):
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        end = i + 1
+                        break
+            candidate = content[start:end]
+            parsed = self._parse_single_tool_block(candidate)
+            if parsed:
+                tool_calls.append(parsed)
+                cleaned = (content[:start] + content[end:]).strip()
+                return tool_calls, cleaned
+
+        return tool_calls, cleaned
+
+    def _parse_single_tool_block(self, block: str) -> Optional[dict[str, Any]]:
+        """Try to parse a single text block into a normalised tool-call dict.
+
+        Handles:
+        - JSON bodies  (``{"name": …, "arguments": …}``)
+        - Qwen XML     (``<function=name><parameter=k>v</parameter></function>``)
+        """
+        block = block.strip()
+
+        # Attempt JSON first
+        try:
+            data = json.loads(block)
+            if isinstance(data, dict):
+                return self._normalize_tool_call(data)
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        # Attempt Qwen-style XML  <function=name> … </function>
+        func_match = re.search(r"<function=([^>]+)>", block)
+        if func_match:
+            func_name = func_match.group(1).strip()
+            params: dict[str, str] = {}
+            for pm in re.finditer(
+                r"<parameter=([^>]+)>(.*?)</parameter>", block, re.DOTALL
+            ):
+                params[pm.group(1).strip()] = pm.group(2).strip()
+            return self._normalize_tool_call(
+                {"name": func_name, "arguments": params}
+            )
+
+        return None
+
+    def _normalize_tool_call(self, data: Any) -> Optional[dict[str, Any]]:
+        """Normalise a parsed dict into the standard ``{id, name, arguments}``
+        format consumed by the agent loop."""
+        if not isinstance(data, dict):
+            return None
+
+        name = data.get("name")
+        arguments = None
+        if not name:
+            # Some models nest under a "function" key
+            func = data.get("function", {})
+            name = func.get("name")
+            arguments = func.get("arguments")
+        else:
+            arguments = data.get("arguments", data.get("parameters", {}))
+
+        if not name:
+            return None
+
+        if isinstance(arguments, dict):
+            arguments = json.dumps(arguments)
+        elif arguments is None:
+            arguments = "{}"
+
+        return {
+            "id": data.get("id", "text_parsed_call"),
+            "name": name,
+            "arguments": arguments,
+        }
 
     def _format_fallback_tools(
         self, messages: List[Dict[str, Any]]
