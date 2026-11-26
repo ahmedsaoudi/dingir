@@ -266,21 +266,37 @@ class BaseLLM(ABC):
         return kwargs
 
     def _parse_reasoning(self, content: str) -> tuple[str, Optional[str]]:
-        """Extracts <think> blocks and returns (cleaned_content, reasoning)."""
+        """Extracts <think>/<thought> blocks and returns (cleaned_content, reasoning)."""
+        TAG_PATTERN = r"<(?:think|thought|\|think\|)>"
+        CLOSE_PATTERN = r"</(?:think|thought|\|think\|)>"
+
+        # 1. Try to extract complete (closed) blocks first
         match = re.search(
-            r"<(?:think|\|think\|)>(.*?)</(?:think|\|think\|)>",
+            TAG_PATTERN + r"(.*?)" + CLOSE_PATTERN,
             content,
             re.DOTALL,
         )
         if match:
             reasoning = match.group(1).strip()
             cleaned_content = re.sub(
-                r"<(?:think|\|think\|)>.*?</(?:think|\|think\|)>\s*",
+                TAG_PATTERN + r".*?" + CLOSE_PATTERN + r"\s*",
                 "",
                 content,
                 flags=re.DOTALL,
             ).strip()
             return cleaned_content, reasoning
+
+        # 2. Handle unclosed tags (model hit token limit mid-thought)
+        unclosed = re.search(
+            TAG_PATTERN + r"(.*)",
+            content,
+            re.DOTALL,
+        )
+        if unclosed:
+            reasoning = unclosed.group(1).strip()
+            cleaned_content = content[: unclosed.start()].strip()
+            return cleaned_content, reasoning
+
         return content, None
 
     def _parse_tool_calls_from_text(
