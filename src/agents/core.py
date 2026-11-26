@@ -91,6 +91,12 @@ class Agent:
             "message": str(exception),
             "context": context,
         }
+        status_code = getattr(exception, "status_code", None)
+        if status_code is not None:
+            exc_data["status_code"] = status_code
+        body = getattr(exception, "body", None)
+        if body is not None:
+            exc_data["body"] = body
         if exc_data not in self._current_step_exceptions:
             self._current_step_exceptions.append(exc_data)
 
@@ -300,13 +306,18 @@ class Agent:
             self.record_exception_encounter(e, "agent_respond")
             if not getattr(e, "_agent_logged", False):
                 import traceback
+                exc_payload = {
+                    "exception_type": e.__class__.__name__,
+                    "message": str(e),
+                    "traceback": traceback.format_exc(),
+                }
+                if getattr(e, "status_code", None) is not None:
+                    exc_payload["status_code"] = e.status_code
+                if getattr(e, "body", None) is not None:
+                    exc_payload["body"] = e.body
                 self.log.record(
                     "exception",
-                    {
-                        "exception_type": e.__class__.__name__,
-                        "message": str(e),
-                        "traceback": traceback.format_exc(),
-                    },
+                    exc_payload,
                     agent_name=self.__name__,
                 )
                 try:
@@ -475,13 +486,18 @@ class Agent:
             self.record_exception_encounter(e, "agent_stream")
             if not getattr(e, "_agent_logged", False):
                 import traceback
+                exc_payload = {
+                    "exception_type": e.__class__.__name__,
+                    "message": str(e),
+                    "traceback": traceback.format_exc(),
+                }
+                if getattr(e, "status_code", None) is not None:
+                    exc_payload["status_code"] = e.status_code
+                if getattr(e, "body", None) is not None:
+                    exc_payload["body"] = e.body
                 self.log.record(
                     "exception",
-                    {
-                        "exception_type": e.__class__.__name__,
-                        "message": str(e),
-                        "traceback": traceback.format_exc(),
-                    },
+                    exc_payload,
                     agent_name=self.__name__,
                 )
                 try:
