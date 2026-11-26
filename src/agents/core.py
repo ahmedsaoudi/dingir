@@ -468,6 +468,7 @@ class Agent:
                     "type": "done",
                     "content": result["content"],
                     "finish_reason": result.get("finish_reason"),
+                    "usage": result.get("usage"),
                 }
                 break
         except Exception as e:

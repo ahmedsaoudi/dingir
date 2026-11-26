@@ -200,16 +200,43 @@ class OpenAI(BaseLLM):
                 cleaned["tool_call_id"] = msg.get("tool_call_id")
             cleaned_messages.append(cleaned)
 
-        stream = self.sync_client.chat.completions.create(
-            model=self.id, messages=cleaned_messages, stream=True, **params
-        )
+        try:
+            stream = self.sync_client.chat.completions.create(
+                model=self.id,
+                messages=cleaned_messages,
+                stream=True,
+                stream_options={"include_usage": True},
+                **params,
+            )
+        except Exception as exc:
+            if "stream_options" in str(exc).lower():
+                stream = self.sync_client.chat.completions.create(
+                    model=self.id,
+                    messages=cleaned_messages,
+                    stream=True,
+                    **params,
+                )
+            else:
+                raise
 
         full_content = ""
         full_reasoning = ""
         tool_calls_by_index: Dict[int, Dict[str, Any]] = {}
         finish_reason = None
+        usage_out = None
 
         for chunk in stream:
+            chunk_usage = getattr(chunk, "usage", None)
+            if chunk_usage is not None:
+                usage_out = {
+                    "input_tokens": getattr(chunk_usage, "prompt_tokens", None),
+                    "output_tokens": getattr(chunk_usage, "completion_tokens", None),
+                    "total_tokens": getattr(chunk_usage, "total_tokens", None),
+                }
+                details = getattr(chunk_usage, "completion_tokens_details", None)
+                if details is not None and getattr(details, "reasoning_tokens", None) is not None:
+                    usage_out["reasoning_tokens"] = details.reasoning_tokens
+
             if not chunk.choices:
                 continue
 
@@ -266,6 +293,7 @@ class OpenAI(BaseLLM):
             "tool_calls": tc_out,
             "reasoning_content": full_reasoning or None,
             "finish_reason": finish_reason,
+            "usage": usage_out,
         }
         self._log_raw_api_call(raw_request, raw_response)
 
@@ -274,6 +302,7 @@ class OpenAI(BaseLLM):
             "content": full_content,
             "tool_calls": tc_out,
             "finish_reason": finish_reason,
+            "usage": usage_out,
             "reasoning_content": full_reasoning or None,
         }
 
