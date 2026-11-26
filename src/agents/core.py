@@ -464,7 +464,11 @@ class Agent:
                     "guards_encountered": list(self._current_step_guards),
                     "exceptions_encountered": list(self._current_step_exceptions),
                 }
-                yield {"type": "done", "content": result["content"]}
+                yield {
+                    "type": "done",
+                    "content": result["content"],
+                    "finish_reason": result.get("finish_reason"),
+                }
                 break
         except Exception as e:
             self.record_exception_encounter(e, "agent_stream")

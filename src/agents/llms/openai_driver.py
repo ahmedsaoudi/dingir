@@ -207,10 +207,14 @@ class OpenAI(BaseLLM):
         full_content = ""
         full_reasoning = ""
         tool_calls_by_index: Dict[int, Dict[str, Any]] = {}
+        finish_reason = None
 
         for chunk in stream:
             if not chunk.choices:
                 continue
+
+            if chunk.choices[0].finish_reason:
+                finish_reason = chunk.choices[0].finish_reason
 
             delta = chunk.choices[0].delta
 
@@ -261,6 +265,7 @@ class OpenAI(BaseLLM):
             "content": full_content,
             "tool_calls": tc_out,
             "reasoning_content": full_reasoning or None,
+            "finish_reason": finish_reason,
         }
         self._log_raw_api_call(raw_request, raw_response)
 
@@ -268,6 +273,7 @@ class OpenAI(BaseLLM):
             "type": "done",
             "content": full_content,
             "tool_calls": tc_out,
+            "finish_reason": finish_reason,
             "reasoning_content": full_reasoning or None,
         }
 
